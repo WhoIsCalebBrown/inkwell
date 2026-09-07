@@ -367,7 +367,11 @@ a.secondary { display: inline-block; text-decoration: none; }
 /* ---------- filters ---------- */
 .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 24px;
   border-top: 1.5px solid var(--rule-strong); border-bottom: 1px solid var(--rule); padding: 16px 0; }
-.filters label { display: grid; gap: 8px; }
+/* Direct children only: a .filter-field now carries its own <label> inside the
+   kicker line, and that one must stay inline beside the ⓘ. */
+.filters > label, .filters > .filter-field { display: grid; gap: 8px; }
+.filter-field .kicker { display: flex; align-items: center; gap: 6px; }
+.filter-field .kicker label { cursor: pointer; }
 .filters select { width: 100%; border: 0; border-bottom: 1px solid var(--rule); background: none;
   color: var(--text); font-family: var(--disp); font-size: 19px; padding: 2px 0 6px; outline: none; }
 .filters select:focus { border-color: var(--accent); }

@@ -240,6 +240,11 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
   *because* it is a name match" rather than "this looks random" — which is the
   only useful bug report about a data source, and the reason the workings are
   published rather than implied.
+- **Never put an ⓘ inside a `<label>` that wraps its control.** A tap on the
+  icon activates the control it is explaining: the format and kind dropdowns
+  opened at the same time as their own tooltip, and neither could be used.
+  `filterField()` keeps the label, the icon and the `<select>` as siblings and
+  ties the first two together with `for`/`id`.
 - **The ⓘ must open on tap.** iPad is a primary device and has no hover; the
   click handler used to swallow the tap and show nothing, which made every icon
   decoration on the device Panel is mostly read on. Tap toggles `.open`, another

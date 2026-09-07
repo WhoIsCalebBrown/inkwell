@@ -652,22 +652,34 @@ function applyContentFilter(items) {
 
 // Rendered above any grid this filter governs, so the reader can always see
 // why a catalogue looks short and undo it in one click.
+// A filter field, deliberately not a <label> wrapping its <select>. It used to
+// be, with the ⓘ inside it — so tapping the icon activated the control it was
+// explaining, and the dropdown and the tip opened on top of each other. The
+// label now names the select by id instead, which leaves the icon a sibling of
+// both and clickable on its own.
+let fieldSeq = 0;
+const filterField = (labelText, tip, control) => {
+  const id = `field-${fieldSeq += 1}`;
+  return `<div class="filter-field">
+    <span class="kicker"><label for="${id}">${labelText}</label>${tip ? ` ${tip}` : ''}</span>
+    ${control(id)}
+  </div>`;
+};
+
 function filterBar(total = null, shown = null) {
   const { format, medium } = contentFilter();
   const option = (value, label, current) =>
     `<option value="${esc(value)}"${current === value ? ' selected' : ''}>${esc(label)}</option>`;
   return `<div class="filters content-filters">
-    <label><span class="kicker">Format ${info('collected edition')}</span>
-      <select data-content-filter="format">
+    ${filterField('Format', info('collected edition'), (id) => `<select id="${id}" data-content-filter="format">
         ${option('all', 'All formats', format)}
         ${FORMATS.map((f) => option(f.name, f.name, format)).join('')}
-      </select></label>
-    <label><span class="kicker">Kind ${info('manga')}</span>
-      <select data-content-filter="medium">
+      </select>`)}
+    ${filterField('Kind', info('manga'), (id) => `<select id="${id}" data-content-filter="medium">
         ${option('all', 'Comics & manga', medium)}
         ${option('comic', 'Comics only', medium)}
         ${option('manga', 'Manga only', medium)}
-      </select></label>
+      </select>`)}
     ${filterActive() ? `<button class="secondary" data-clear-filter>Clear filter</button>` : ''}
     ${total !== null && shown !== null && shown !== total
       ? `<span class="kicker aside">${shown} of ${total} shown</span>` : ''}
@@ -1099,20 +1111,20 @@ function renderFilters() {
   const editions = state.editions.length
     ? state.editions
     : [...new Set(state.results.map((x) => x.edition).filter(Boolean))];
-  const select = (key, label, options) => `<label><span class="kicker">${label}</span>
-    <select data-filter="${key}">${options.map(([v, t]) =>
-      `<option value="${esc(v)}"${state.filters[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
+  const select = (key, label, options, tip = '') => filterField(label, tip, (id) =>
+    `<select id="${id}" data-filter="${key}">${options.map(([v, t]) =>
+      `<option value="${esc(v)}"${state.filters[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`);
   document.querySelector('#filters').innerHTML =
-    select('medium', `Kind ${info('manga')}`, [['all', 'Comics & manga'], ['comic', 'Comics only'], ['manga', 'Manga only']]) +
-    select('format', `Format ${info('collected edition')}`, [['all', 'All formats'], ...editions.map((e) => [e, e])]) +
+    select('medium', 'Kind', [['all', 'Comics & manga'], ['comic', 'Comics only'], ['manga', 'Manga only']], info('manga')) +
+    select('format', 'Format', [['all', 'All formats'], ...editions.map((e) => [e, e])], info('collected edition')) +
     select('publisher', 'Publisher', [['all', 'All publishers'], ...publishers.map((p) => [p, p])]) +
-    select('sort', `Sort ${info('notability')}`, [
+    select('sort', 'Sort', [
       ['relevance', 'Best match'],
       ['notable', 'Most notable'],
       ['newest', 'Newest'],
       ['issues', 'Most issues'],
       ['title', 'A–Z'],
-    ]) +
+    ], info('notability')) +
     perPageSelect('search-size');
 }
 
