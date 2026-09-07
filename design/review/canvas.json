@@ -1,0 +1,24 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Formats" },
+    { "id": "page-2", "name": "First-run intro" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html",    "x": 0,    "y": 0,    "w": 980,  "h": 560, "title": "A — Say the numbers",        "page": "page-1" },
+    { "file": "FormatB.dc.html", "x": 1090, "y": 0,    "w": 980,  "h": 560, "title": "B — Measured against one comic", "page": "page-1" },
+    { "file": "FormatC.dc.html", "x": 0,    "y": 700,  "w": 980,  "h": 600, "title": "C — One shelf, all nine",    "page": "page-1" },
+    { "file": "FormatD.dc.html", "x": 1090, "y": 700,  "w": 980,  "h": 600, "title": "D — How much story you get", "page": "page-1" },
+    { "file": "FormatE.dc.html", "x": 545,  "y": 1440, "w": 980,  "h": 620, "title": "E — This many comics",       "page": "page-1" },
+
+    { "file": "IntroA.dc.html",  "x": 0,    "y": 0,    "w": 1160, "h": 520, "title": "Intro A — The veil",     "page": "page-2" },
+    { "file": "IntroB.dc.html",  "x": 0,    "y": 660,  "w": 1160, "h": 540, "title": "Intro B — The collapse", "page": "page-2" },
+    { "file": "IntroC.dc.html",  "x": 0,    "y": 1340, "w": 1160, "h": 540, "title": "Intro C — The curtain",  "page": "page-2" }
+  ],
+  "annotations": [
+    { "id": "formats-brief", "x": 0, "y": -230, "w": 900, "page": "page-1",
+      "text": "The problem: width-as-thickness is abstract — it never said what an omnibus IS.\n\nFive directions, roughly least to most adventurous. A and D are compatible: A answers \"how big is the book\", D answers \"do I get the whole story\". C is the one that shrinks the section most.\n\nEvery option also has to be cheaper than the current nine tall cards." },
+    { "id": "intro-brief", "x": 0, "y": -250, "w": 900, "page": "page-2",
+      "text": "The problem: the collapsed \"What is this?\" bar reads like a breadcrumb, and unfurling it shows exactly the copy you wanted gone.\n\nAll three are once-per-page, keyed on panel:seen:<route>, skippable on any key or click, and disabled entirely under prefers-reduced-motion (they fall back to the page, no intro).\n\nEach frame is a moment in the animation, left to right." }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

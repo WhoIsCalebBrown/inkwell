@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; color: #b9b09b; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+    .ghost { filter: blur(2.5px); opacity: .32; }
+  </style>
+</helmet>
+<div class="ui" style="padding: 30px 34px; background: #14120d; width: 1160px; box-sizing: border-box;">
+  <div style="display: flex; align-items: baseline; gap: 16px; border-top: 1.5px solid #f4efe2; padding-top: 14px;">
+    <span class="kicker" style="color: #e0563a;">Intro A</span>
+    <span class="disp" style="font-size: 30px; color: #f4efe2; line-height: 1;">The veil</span>
+    <span class="kicker" style="margin-left: auto;">Whisps in, holds, dissolves</span>
+  </div>
+  <p style="max-width: 66ch; font-size: 13.5px; line-height: 1.6; color: #948b78; margin: 13px 0 24px;">
+    Full-bleed over the page. Words arrive letter-blurred and settle; the panel then dissolves and the
+    page is simply there behind it. No button, no dismissal — it is over in about three seconds.
+  </p>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+
+    <div>
+      <div style="position:relative;height:250px;background:#14120d;border:1px solid #322d22;overflow:hidden;">
+        <div class="ghost" style="position:absolute;inset:0;padding:22px 26px;box-sizing:border-box;">
+      <div style="display:flex;gap:20px;align-items:baseline;border-bottom:1px solid #322d22;padding-bottom:12px;">
+        <span class="disp" style="font-size:26px;color:#e0563a;">Panel</span>
+        <span style="flex:1;border-bottom:1.5px solid #f4efe2;height:14px;"></span>
+        <span class="kicker">In library 5</span>
+      </div>
+      <div style="display:flex;gap:22px;padding:12px 0 18px;"><span class="kicker">Discover</span><span class="kicker">Browse</span><span class="kicker">Characters &amp; creators</span><span class="kicker">My requests</span></div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
+        <div style="height:120px;background:#25324a;"></div><div style="height:120px;background:#3c2a22;"></div><div style="height:120px;background:#2a3a2f;"></div><div style="height:120px;background:#332745;"></div><div style="height:120px;background:#3a3326;"></div>
+      </div>
+    </div>
+        <div style="position:absolute;inset:0;background:rgba(20,18,13,.97);display:grid;place-items:center;padding:0 30px;">
+          <div style="text-align:center;filter:blur(9px);opacity:.35;">
+            <div class="disp" style="font-size:34px;color:#f4efe2;line-height:1;">A reading room<br />for comics.</div>
+          </div>
+        </div>
+      </div>
+      <span class="kicker" style="display:block;margin-top:9px;">0.0s — arrives blurred</span>
+    </div>
+
+    <div>
+      <div style="position:relative;height:250px;background:#14120d;border:1px solid #322d22;overflow:hidden;">
+        <div class="ghost" style="position:absolute;inset:0;padding:22px 26px;box-sizing:border-box;">
+      <div style="display:flex;gap:20px;align-items:baseline;border-bottom:1px solid #322d22;padding-bottom:12px;">
+        <span class="disp" style="font-size:26px;color:#e0563a;">Panel</span>
+        <span style="flex:1;border-bottom:1.5px solid #f4efe2;height:14px;"></span>
+        <span class="kicker">In library 5</span>
+      </div>
+      <div style="display:flex;gap:22px;padding:12px 0 18px;"><span class="kicker">Discover</span><span class="kicker">Browse</span><span class="kicker">Characters &amp; creators</span><span class="kicker">My requests</span></div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
+        <div style="height:120px;background:#25324a;"></div><div style="height:120px;background:#3c2a22;"></div><div style="height:120px;background:#2a3a2f;"></div><div style="height:120px;background:#332745;"></div><div style="height:120px;background:#3a3326;"></div>
+      </div>
+    </div>
+        <div style="position:absolute;inset:0;background:rgba(20,18,13,.97);display:grid;place-items:center;padding:0 30px;">
+          <div style="text-align:center;">
+            <div class="disp" style="font-size:34px;color:#f4efe2;line-height:1.02;">A reading room<br />for comics.</div>
+            <p style="margin:16px auto 0;max-width:34ch;font-size:12.5px;line-height:1.6;color:#948b78;">
+              Search a character, a creator or a book. Ask for it, and Mylar goes and finds it.</p>
+          </div>
+        </div>
+      </div>
+      <span class="kicker" style="display:block;margin-top:9px;">1.2s — settled, holds</span>
+    </div>
+
+    <div>
+      <div style="position:relative;height:250px;background:#14120d;border:1px solid #322d22;overflow:hidden;">
+        <div style="position:absolute;inset:0;padding:22px 26px;box-sizing:border-box;">
+          <div style="display:flex;gap:20px;align-items:baseline;border-bottom:1px solid #322d22;padding-bottom:12px;">
+            <span class="disp" style="font-size:26px;color:#e0563a;">Panel</span>
+            <span style="flex:1;border-bottom:1.5px solid #f4efe2;height:14px;"></span>
+            <span class="kicker">In library 5</span>
+          </div>
+          <div style="display:flex;gap:22px;padding:12px 0 18px;"><span class="kicker">Discover</span><span class="kicker">Browse</span><span class="kicker">Characters &amp; creators</span><span class="kicker">My requests</span></div>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;">
+            <div style="height:120px;background:#25324a;"></div><div style="height:120px;background:#3c2a22;"></div><div style="height:120px;background:#2a3a2f;"></div><div style="height:120px;background:#332745;"></div><div style="height:120px;background:#3a3326;"></div>
+          </div>
+        </div>
+        <div style="position:absolute;inset:0;background:rgba(20,18,13,.22);"></div>
+      </div>
+      <span class="kicker" style="display:block;margin-top:9px;">2.8s — gone, page revealed</span>
+    </div>
+  </div>
+  <p style="font-size: 12px; line-height: 1.5; color: #66a98a; margin: 20px 0 0; border-left: 2px solid #3c5c4c; padding-left: 12px; max-width: 66ch;">
+    Trade-off: it blocks the page for three seconds. Fine once per screen, infuriating if the "seen" flag is ever lost — it must also be skippable on any key or click.
+  </p>
+</div>
+</x-dc>
+</body>
+</html>

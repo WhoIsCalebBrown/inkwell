@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; color: #b9b09b; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+<div class="ui" style="padding: 30px 34px; background: #14120d; width: 1160px; box-sizing: border-box;">
+  <div style="display: flex; align-items: baseline; gap: 16px; border-top: 1.5px solid #f4efe2; padding-top: 14px;">
+    <span class="kicker" style="color: #e0563a;">Intro B</span>
+    <span class="disp" style="font-size: 30px; color: #f4efe2; line-height: 1;">The collapse</span>
+    <span class="kicker" style="margin-left: auto;">It shrinks into the bar it becomes</span>
+  </div>
+  <p style="max-width: 68ch; font-size: 13.5px; line-height: 1.6; color: #948b78; margin: 13px 0 24px;">
+    Nothing is hidden and nothing blocks the page. The full lede appears at its editorial size, then
+    scales and slides up into the one-line kicker it will be from now on — so the reader watches
+    where it went, and knows where to find it again.
+  </p>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;">
+
+    <div>
+      <div style="position:relative;height:250px;background:#14120d;border:1px solid #322d22;overflow:hidden;padding:20px 24px;box-sizing:border-box;">
+        <div style="display:flex;gap:20px;align-items:baseline;border-bottom:1px solid #322d22;padding-bottom:12px;">
+            <span class="disp" style="font-size:26px;color:#e0563a;">Panel</span>
+            <span style="flex:1;border-bottom:1.5px solid #f4efe2;height:14px;"></span>
+            <span class="kicker">In library 5</span>
+          </div>
+          <div style="display:flex;gap:22px;padding:12px 0 18px;"><span class="kicker">Discover</span><span class="kicker">Browse</span><span class="kicker">Characters &amp; creators</span><span class="kicker">My requests</span></div>
+        <div style="padding-top:14px;">
+          <span class="kicker" style="color:#e0563a;">Browse</span>
+          <div class="disp" style="font-size:38px;color:#f4efe2;line-height:.94;margin-top:10px;">Start with a house,<br />or the <em>shape</em> of the book.</div>
+        </div>
+      </div>
+      <span class="kicker" style="display:block;margin-top:9px;">0.0s — full size</span>
+    </div>
+
+    <div>
+      <div style="position:relative;height:250px;background:#14120d;border:1px solid #322d22;overflow:hidden;padding:20px 24px;box-sizing:border-box;">
+        <div style="display:flex;gap:20px;align-items:baseline;border-bottom:1px solid #322d22;padding-bottom:12px;">
+            <span class="disp" style="font-size:26px;color:#e0563a;">Panel</span>
+            <span style="flex:1;border-bottom:1.5px solid #f4efe2;height:14px;"></span>
+            <span class="kicker">In library 5</span>
+          </div>
+          <div style="display:flex;gap:22px;padding:12px 0 18px;"><span class="kicker">Discover</span><span class="kicker">Browse</span><span class="kicker">Characters &amp; creators</span><span class="kicker">My requests</span></div>
+        <div style="padding-top:14px;transform:scale(.62);transform-origin:top left;opacity:.55;">
+          <span class="kicker" style="color:#e0563a;">Browse</span>
+          <div class="disp" style="font-size:38px;color:#f4efe2;line-height:.94;margin-top:10px;">Start with a house,<br />or the <em>shape</em> of the book.</div>
+        </div>
+        <div style="position:absolute;left:24px;right:24px;top:150px;opacity:.35;">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+            <div style="height:70px;background:#25324a;"></div><div style="height:70px;background:#3c2a22;"></div><div style="height:70px;background:#2a3a2f;"></div><div style="height:70px;background:#332745;"></div>
+          </div>
+        </div>
+      </div>
+      <span class="kicker" style="display:block;margin-top:9px;">0.5s — scaling up and away</span>
+    </div>
+
+    <div>
+      <div style="position:relative;height:250px;background:#14120d;border:1px solid #322d22;overflow:hidden;padding:20px 24px;box-sizing:border-box;">
+        <div style="display:flex;gap:20px;align-items:baseline;border-bottom:1px solid #322d22;padding-bottom:12px;">
+            <span class="disp" style="font-size:26px;color:#e0563a;">Panel</span>
+            <span style="flex:1;border-bottom:1.5px solid #f4efe2;height:14px;"></span>
+            <span class="kicker">In library 5</span>
+          </div>
+          <div style="display:flex;gap:22px;padding:12px 0 18px;"><span class="kicker">Discover</span><span class="kicker">Browse</span><span class="kicker">Characters &amp; creators</span><span class="kicker">My requests</span></div>
+        <div style="display:flex;align-items:baseline;gap:14px;padding:6px 0 14px;">
+          <span class="kicker" style="color:#e0563a;">Browse</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+          <div style="height:88px;background:#25324a;"></div><div style="height:88px;background:#3c2a22;"></div><div style="height:88px;background:#2a3a2f;"></div><div style="height:88px;background:#332745;"></div>
+        </div>
+      </div>
+      <span class="kicker" style="display:block;margin-top:9px;">1.0s — settled, content in place</span>
+    </div>
+  </div>
+  <p style="font-size: 12px; line-height: 1.5; color: #66a98a; margin: 20px 0 0; border-left: 2px solid #3c5c4c; padding-left: 12px; max-width: 66ch;">
+    Trade-off: the quietest of the four and the cheapest to build — but it is a transition, not a moment. Nobody will describe it as delightful.
+  </p>
+</div>
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; color: #b9b09b; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+<div class="ui" style="padding: 34px 38px; background: #14120d; width: 980px; box-sizing: border-box;">
+  <div style="display: flex; align-items: baseline; gap: 16px; border-top: 1.5px solid #f4efe2; padding-top: 14px;">
+    <span class="kicker" style="color: #e0563a;">Option D</span>
+    <span class="disp" style="font-size: 30px; color: #f4efe2; line-height: 1;">How much of the story you get</span>
+    <span class="kicker" style="margin-left: auto;">Editorial, not physical</span>
+  </div>
+  <p style="max-width: 64ch; font-size: 13.5px; line-height: 1.6; color: #948b78; margin: 14px 0 28px;">
+    Reframes the whole section. A reader picking a format is really asking “do I get the whole story
+    or a slice of it?” — so show coverage of a run rather than millimetres of paper.
+  </p>
+
+  <div style="display: grid; gap: 14px;">
+    <div style="display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 20px; align-items: center;">
+      <span class="disp" style="font-size: 20px; color: #f4efe2; text-align: right;">Omnibus</span>
+      <div>
+        <div style="height: 16px; background: #241f17; position: relative;">
+          <div style="position: absolute; inset: 0 8% 0 0; background: #e0563a;"></div>
+        </div>
+        <span style="display: block; margin-top: 6px; font-size: 12.5px; color: #948b78;">A complete era — start to finish, nothing missing.</span>
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 20px; align-items: center;">
+      <span class="disp" style="font-size: 20px; color: #f4efe2; text-align: right;">Compendium</span>
+      <div>
+        <div style="height: 16px; background: #241f17; position: relative;">
+          <div style="position: absolute; inset: 0 4% 0 0; background: #e0563a;"></div>
+        </div>
+        <span style="display: block; margin-top: 6px; font-size: 12.5px; color: #948b78;">The same ground, cheaper paper and smaller print.</span>
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 20px; align-items: center;">
+      <span class="disp" style="font-size: 20px; color: #f4efe2; text-align: right;">Epic Collection</span>
+      <div>
+        <div style="height: 16px; background: #241f17; position: relative;">
+          <div style="position: absolute; inset: 0 62% 0 0; background: #e0563a;"></div>
+          <div style="position: absolute; inset: 0 44% 0 38%; background: #7a3428;"></div>
+          <div style="position: absolute; inset: 0 26% 0 56%; background: #5c281e;"></div>
+        </div>
+        <span style="display: block; margin-top: 6px; font-size: 12.5px; color: #948b78;">A numbered slice. Buy the next number to keep going.</span>
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 20px; align-items: center;">
+      <span class="disp" style="font-size: 20px; color: #f4efe2; text-align: right;">Collected edition</span>
+      <div>
+        <div style="height: 16px; background: #241f17; position: relative;">
+          <div style="position: absolute; inset: 0 88% 0 0; background: #e0563a;"></div>
+        </div>
+        <span style="display: block; margin-top: 6px; font-size: 12.5px; color: #948b78;">One arc. Where a story starts, not where it ends.</span>
+      </div>
+    </div>
+  </div>
+  <div style="display: flex; justify-content: space-between; margin-top: 12px; padding-left: 172px;">
+    <span class="kicker">Issue #1</span><span class="kicker">The end of the run</span>
+  </div>
+  <p style="font-size: 12px; line-height: 1.5; color: #66a98a; margin: 22px 0 0; border-left: 2px solid #3c5c4c; padding-left: 12px; max-width: 62ch;">
+    Trade-off: answers “how much story” but says nothing about binding or size — pair it with Option A's facts line.
+  </p>
+</div>
+</x-dc>
+</body>
+</html>

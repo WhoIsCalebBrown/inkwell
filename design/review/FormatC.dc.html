@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; color: #b9b09b; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+<div class="ui" style="padding: 34px 38px; background: #14120d; width: 980px; box-sizing: border-box;">
+  <div style="display: flex; align-items: baseline; gap: 16px; border-top: 1.5px solid #f4efe2; padding-top: 14px;">
+    <span class="kicker" style="color: #e0563a;">Option C</span>
+    <span class="disp" style="font-size: 30px; color: #f4efe2; line-height: 1;">One shelf, all nine</span>
+    <span class="kicker" style="margin-left: auto;">The whole section in one row</span>
+  </div>
+  <p style="max-width: 62ch; font-size: 13.5px; line-height: 1.6; color: #948b78; margin: 14px 0 30px;">
+    Nine cards become one object. The formats stand together on a shelf, so the comparison is the
+    picture rather than something the reader assembles from nine separate rows. Click a spine to filter.
+  </p>
+
+  <div style="display: flex; align-items: flex-end; gap: 5px; padding: 26px 22px 0; background: #1d1a13; border: 1px solid #322d22; border-bottom: 4px solid #4d4636;">
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 46px; height: 168px; background: linear-gradient(90deg,#e0563a 0 6px,#f4efe2 6px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker" style="color: #f4efe2;">Omnibus</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 42px; height: 156px; background: linear-gradient(90deg,#e0563a 0 5px,#d8d1bf 5px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Compendium</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 34px; height: 172px; background: linear-gradient(90deg,#e0563a 0 5px,#efe7d4 5px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Absolute</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 32px; height: 166px; background: linear-gradient(90deg,#e0563a 0 5px,#f4efe2 5px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Library ed.</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 22px; height: 150px; background: linear-gradient(90deg,#e0563a 0 4px,#d8d1bf 4px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Epic Coll.</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 20px; height: 158px; background: linear-gradient(90deg,#e0563a 0 4px,#f4efe2 4px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Masterworks</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 18px; height: 162px; background: linear-gradient(90deg,#e0563a 0 4px,#f4efe2 4px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Deluxe</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 14px; height: 148px; background: linear-gradient(90deg,#e0563a 0 3px,#f4efe2 3px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Hardcover</span></div>
+    <div style="display: grid; justify-items: center; gap: 9px;">
+      <span style="display: block; width: 9px; height: 142px; background: linear-gradient(90deg,#e0563a 0 3px,#d8d1bf 3px); box-shadow: 0 10px 24px rgba(0,0,0,.6);"></span>
+      <span class="kicker">Collected</span></div>
+    <div style="flex: 1;"></div>
+  </div>
+  <p style="font-size: 12.5px; line-height: 1.6; color: #948b78; margin: 18px 0 0; max-width: 66ch;">
+    Hovering a spine pulls it forward and shows its line underneath — the copy lives in one place
+    instead of nine, so the section costs about 240px of page instead of 900.
+  </p>
+  <p style="font-size: 12px; line-height: 1.5; color: #66a98a; margin: 16px 0 0; border-left: 2px solid #3c5c4c; padding-left: 12px; max-width: 60ch;">
+    Trade-off: the blurbs are no longer all visible at once — you trade scannable prose for a single strong picture.
+  </p>
+</div>
+</x-dc>
+</body>
+</html>

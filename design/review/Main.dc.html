@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; color: #b9b09b; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+<div class="ui" style="padding: 34px 38px; background: #14120d; width: 980px; box-sizing: border-box;">
+  <div style="display: flex; align-items: baseline; gap: 16px; border-top: 1.5px solid #f4efe2; padding-top: 14px;">
+    <span class="kicker" style="color: #e0563a;">Option A</span>
+    <span class="disp" style="font-size: 30px; color: #f4efe2; line-height: 1;">Say the numbers</span>
+    <span class="kicker" style="margin-left: auto;">No graphic at all</span>
+  </div>
+  <p style="max-width: 62ch; font-size: 13.5px; line-height: 1.6; color: #948b78; margin: 14px 0 26px;">
+    Thickness was never the question — “will I get the whole story, and how big is the book?” is.
+    Four plain facts answer it faster than any drawing.
+  </p>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+    <div style="border: 1px solid #322d22; background: #1d1a13; padding: 16px 18px; display: grid; gap: 10px;">
+      <span class="disp" style="font-size: 21px; color: #f4efe2; line-height: 1;">Omnibus</span>
+      <div style="display: flex; gap: 22px; border-top: 1px solid #322d22; padding-top: 11px;">
+        <div><span class="kicker">Pages</span><div class="disp" style="font-size: 22px; color: #f4efe2;">700–1,200</div></div>
+        <div><span class="kicker">Collects</span><div class="disp" style="font-size: 22px; color: #f4efe2;">30–60 issues</div></div>
+        <div><span class="kicker">Binding</span><div class="disp" style="font-size: 22px; color: #f4efe2;">Hardcover</div></div>
+      </div>
+      <span style="font-size: 12.5px; line-height: 1.5; color: #948b78;">A whole era in one book, oversized.</span>
+    </div>
+    <div style="border: 1px solid #322d22; background: #1d1a13; padding: 16px 18px; display: grid; gap: 10px;">
+      <span class="disp" style="font-size: 21px; color: #f4efe2; line-height: 1;">Compendium</span>
+      <div style="display: flex; gap: 22px; border-top: 1px solid #322d22; padding-top: 11px;">
+        <div><span class="kicker">Pages</span><div class="disp" style="font-size: 22px; color: #f4efe2;">1,000–1,500</div></div>
+        <div><span class="kicker">Collects</span><div class="disp" style="font-size: 22px; color: #f4efe2;">40–70 issues</div></div>
+        <div><span class="kicker">Binding</span><div class="disp" style="font-size: 22px; color: #f4efe2;">Softcover</div></div>
+      </div>
+      <span style="font-size: 12.5px; line-height: 1.5; color: #948b78;">Most story per pound. Cheap paper, small print.</span>
+    </div>
+    <div style="border: 1px solid #322d22; background: #1d1a13; padding: 16px 18px; display: grid; gap: 10px;">
+      <span class="disp" style="font-size: 21px; color: #f4efe2; line-height: 1;">Epic Collection</span>
+      <div style="display: flex; gap: 22px; border-top: 1px solid #322d22; padding-top: 11px;">
+        <div><span class="kicker">Pages</span><div class="disp" style="font-size: 22px; color: #f4efe2;">400–500</div></div>
+        <div><span class="kicker">Collects</span><div class="disp" style="font-size: 22px; color: #f4efe2;">15–25 issues</div></div>
+        <div><span class="kicker">Binding</span><div class="disp" style="font-size: 22px; color: #f4efe2;">Softcover</div></div>
+      </div>
+      <span style="font-size: 12.5px; line-height: 1.5; color: #948b78;">Numbered, so you can read a run straight through.</span>
+    </div>
+    <div style="border: 1px solid #322d22; background: #1d1a13; padding: 16px 18px; display: grid; gap: 10px;">
+      <span class="disp" style="font-size: 21px; color: #f4efe2; line-height: 1;">Collected edition</span>
+      <div style="display: flex; gap: 22px; border-top: 1px solid #322d22; padding-top: 11px;">
+        <div><span class="kicker">Pages</span><div class="disp" style="font-size: 22px; color: #f4efe2;">120–160</div></div>
+        <div><span class="kicker">Collects</span><div class="disp" style="font-size: 22px; color: #f4efe2;">4–6 issues</div></div>
+        <div><span class="kicker">Binding</span><div class="disp" style="font-size: 22px; color: #f4efe2;">Softcover</div></div>
+      </div>
+      <span style="font-size: 12.5px; line-height: 1.5; color: #948b78;">One story arc, one book. The everyday trade.</span>
+    </div>
+  </div>
+  <p style="font-size: 12px; line-height: 1.5; color: #66a98a; margin: 20px 0 0; border-left: 2px solid #3c5c4c; padding-left: 12px; max-width: 60ch;">
+    Trade-off: page ranges are editorial knowledge, not ComicVine data — they would be written once, by hand, and kept in the code.
+  </p>
+</div>
+</x-dc>
+</body>
+</html>

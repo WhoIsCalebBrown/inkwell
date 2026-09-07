@@ -4,8 +4,9 @@ npm-debug.log
 # Local ComicVine/Komga cache — rebuildable, and large.
 data/
 
-# Seeded design canvas — rebuildable from design/*.dc.html + canvas.json
+# Seeded design canvases — rebuildable from the .dc.html artboards + canvas.json
 design/panel-comic-app.html
+design/review/panel-formats-and-intro.html
 
 # Marvel API keys are read from the environment, never committed.
 .env
