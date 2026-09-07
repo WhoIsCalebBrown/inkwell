@@ -41,7 +41,9 @@ const cache = new Map();
 
 // ComicVine detail responses are enormous — a single character document is
 // ~4.9 MB unfiltered and ~218 KB with field_list. Always send one.
-const VOLUME_FIELDS = 'id,name,start_year,count_of_issues,image,publisher,description,deck,site_detail_url,resource_type';
+// first_issue/last_issue carry issue_number, which is the only thing that tells
+// six volumes all called "The Amazing Spider-Man" apart.
+const VOLUME_FIELDS = 'id,name,start_year,count_of_issues,image,publisher,description,deck,site_detail_url,resource_type,first_issue,last_issue';
 // Only for the single-volume sheet: creators and cast are genuinely useful and
 // come free in the same call, but they are far too heavy for list responses.
 // ComicVine has no genre field -- its `concepts` are cover-variant bookkeeping
@@ -194,9 +196,16 @@ function catalogueShape(item, watchedIds) {
   // Descriptions frequently list every available format (even on a regular
   // series), so classify from the listing title/type rather than its blurb.
   const edition = EDITIONS.find(([, pattern]) => pattern.test(titleText))?.[0] ?? 'Series';
+  const firstNo = item.first_issue?.issue_number;
+  const lastNo = item.last_issue?.issue_number;
+  // "#1-700.1" says more about which run this is than any other single field.
+  const range = firstNo && lastNo
+    ? (String(firstNo) === String(lastNo) ? `#${firstNo}` : `#${firstNo}–${lastNo}`)
+    : null;
   return {
     id: String(item.id), title: item.name, year: item.start_year, publisher: item.publisher?.name,
     medium: mediumOf(item.publisher?.name),
+    issueRange: range,
     issues: Number(item.count_of_issues) || 0, cover: image.super_url || image.medium_url || image.small_url || null,
     description: plainText(item.description || item.deck), type: 'Volume', edition, imprint: null,
     url: item.site_detail_url, requested: watchedIds.has(String(item.id)),
@@ -572,6 +581,48 @@ app.get('/api/publisher/:name/volumes', async (req, res, next) => {
       pages: Math.ceil(ids.length / pageSize),
       items,
     });
+  } catch (error) { next(error); }
+});
+
+// Formats with a representative cover, so browse shows real books rather than
+// only drawn shapes. One cached search per format.
+const FORMAT_BLURBS = {
+  Omnibus: 'A brick. One oversized hardcover swallowing a whole run, often 700+ pages.',
+  Compendium: 'Phone-book thick and cheap. Huge page count, softcover, small print.',
+  'Library edition': 'Oversized hardcover, complete runs, made to sit on a shelf for years.',
+  Absolute: 'DC at its most lavish: slipcased, oversized, remastered art.',
+  'Epic Collection': 'Marvel in order, in paperback. The cheapest way to read a long run.',
+  Masterworks: 'Marvel’s archival hardcovers. Early issues, restored colour.',
+  'Deluxe edition': 'Hardcover, bigger trim, sketches and scripts in the back.',
+  Hardcover: 'A bound collection at normal size. A few issues, not a run.',
+  'Collected edition': 'The everyday trade paperback: one story arc, one book.',
+};
+const FORMAT_SPINES = {
+  Omnibus: 46, Compendium: 42, 'Library edition': 32, Absolute: 34, 'Epic Collection': 22,
+  Masterworks: 20, 'Deluxe edition': 18, Hardcover: 14, 'Collected edition': 9,
+};
+
+app.get('/api/formats', async (_req, res, next) => {
+  try {
+    const items = await cached('formats:v1', 30 * 24 * 60 * 60_000, async () => {
+      const names = Object.keys(FORMAT_BLURBS);
+      const covers = await Promise.all(names.map(async (name) => {
+        const terms = FORMAT_QUERIES[name] ?? [name.toLowerCase()];
+        const rows = await comicVine('search', {
+          query: terms[0], resources: 'volume', limit: '30', field_list: VOLUME_FIELDS,
+        }).catch(() => []);
+        // Prefer a well-known house with real art, so the shelf looks like a shelf.
+        const best = (rows ?? [])
+          .filter((r) => r.image?.super_url && EDITIONS.find(([e]) => e === name)?.[1].test(String(r.name).toLowerCase()))
+          .sort((a, b) => (weightOf(b.publisher?.name) - weightOf(a.publisher?.name))
+            || ((Number(b.count_of_issues) || 0) - (Number(a.count_of_issues) || 0)))[0];
+        return best?.image?.super_url ?? null;
+      }));
+      return names.map((name, i) => ({
+        name, blurb: FORMAT_BLURBS[name], spine: FORMAT_SPINES[name], cover: covers[i],
+      }));
+    });
+    res.json({ items });
   } catch (error) { next(error); }
 });
 

@@ -10,6 +10,37 @@ const searchInput = document.querySelector('#search-input');
 
 const state = { shelf: [], filters: {}, results: [], editions: [], query: '' };
 
+// Comics vocabulary is genuinely opaque from the outside, and the app is full of
+// it. Anything in here gets a dotted underline and explains itself on hover.
+const GLOSSARY = {
+  omnibus: 'One oversized hardcover collecting a long run of issues — often 700+ pages, and usually the cheapest way to own a whole era.',
+  compendium: 'Phone-book sized softcover. Even more pages than an omnibus, on cheaper paper with smaller print.',
+  absolute: 'DC’s premium line: oversized, slipcased hardcovers with remastered artwork.',
+  'epic collection': 'Marvel’s paperback line that reprints a run in story order, numbered so you can read straight through.',
+  masterworks: 'Marvel’s archival hardcovers, reprinting the earliest issues of a title with restored colour.',
+  'deluxe edition': 'A hardcover at larger-than-normal size, usually with sketches, scripts or covers in the back.',
+  'library edition': 'Oversized hardcover collecting a complete run, built to last on a shelf.',
+  hardcover: 'A bound collection at standard size — a few issues rather than a whole run.',
+  'collected edition': 'The everyday trade paperback: one story arc gathered into a single book.',
+  'one-shot': 'A self-contained single issue that is not part of an ongoing series.',
+  annual: 'An oversized once-a-year issue, usually a standalone story.',
+  imprint: 'A publishing line within a publisher, with its own editorial identity — Vertigo inside DC, MAX inside Marvel.',
+  'earth-616': 'The main Marvel continuity — the "default" universe most Marvel comics take place in.',
+  'prime earth': 'DC’s main continuity since 2011, the equivalent of Marvel’s Earth-616.',
+  vertigo: 'DC’s adult imprint (1993–2020): Sandman, Preacher, Y: The Last Man.',
+  max: 'Marvel’s adult imprint — Punisher MAX, Alias.',
+  thread: 'Whatever you follow through the catalogue: a character, a creator, a team or an event.',
+  volume: 'ComicVine’s word for a single series run — every "The Amazing Spider-Man" launch is its own volume.',
+  manga: 'Comics from Japanese publishers, read right to left and usually collected in numbered volumes.',
+  opds: 'An open catalogue standard that comic readers use to browse a server’s library.',
+  notability: 'Our own ranking, not a rating: how established the publisher is, plus how substantial the book is. ComicVine has no ratings at all.',
+};
+
+const term = (text, key = text) => {
+  const tip = GLOSSARY[String(key).toLowerCase()];
+  return tip ? `<span class="term" tabindex="0" data-tip="${esc(tip)}">${esc(text)}</span>` : esc(text);
+};
+
 /* ---------------- poster size ---------------- */
 
 const poster = document.querySelector('#poster');
@@ -133,7 +164,9 @@ function volumeCard(item) {
       <span class="kicker" style="color:${item.edition === 'Omnibus' ? 'var(--accent)' : 'var(--muted)'}">${
         esc([item.medium === 'manga' ? 'Manga' : null, item.edition].filter(Boolean).join(' · '))}</span>
       <h3>${esc(item.title)}</h3>
-      <span class="sub">${[item.publisher, item.year, item.issues ? plural(item.issues, 'issue') : null].filter(Boolean).map(esc).join(' · ')}</span>
+      <span class="sub">${[item.publisher, item.year].filter(Boolean).map(esc).join(' · ')}</span>
+      <span class="sub range">${[item.issueRange, item.issues ? plural(item.issues, 'issue') : null]
+        .filter(Boolean).map(esc).join(' · ') || '&nbsp;'}</span>
       <button class="act ${owned ? 'owned' : ''}" data-request="${esc(item.id)}" ${owned ? 'disabled' : ''}>
         ${owned ? 'On your shelf' : 'Request →'}
       </button>
@@ -205,31 +238,22 @@ const FORMATS = [
 ];
 
 routes.browse = async () => {
-  // Browse is a choice of axis, not a publisher list: publisher is only one of
-  // the ways in, and leading with it hid formats and kinds entirely.
   view.innerHTML = `<section class="lede" style="border:0;padding-bottom:26px">
       <span class="kicker" style="color:var(--accent)">Browse</span>
       <h1>Find it the way<br />you already <em>think</em> about it.</h1>
-      <p>By the shape of the book, where it comes from, or the house that made it.</p>
+      <p>Start with a publisher, or come at it by the shape of the book.
+         Anything underlined explains itself &mdash; hover it.</p>
     </section>
 
-    <div class="section-head"><span class="kicker no">01</span><h2>By format</h2>
-      <span class="kicker aside">Spine width to scale, against a standard paperback</span></div>
-    <div class="format-grid">${FORMATS.map((f) => `
-      <button class="format-card" data-format="${esc(f.name)}">
-        <span class="shelf-row">
-          <span class="book" style="width:${f.spine}px"></span>
-          ${/* The reference books are a FIXED standard trade paperback. Scaling
-                them with the subject, as they were, destroyed the comparison:
-                every card looked identical. */ ''}
-          <span class="book ghost"></span>
-          <span class="book ghost"></span>
-        </span>
-        <span class="disp format-name">${esc(f.name)}</span>
-        <span class="format-blurb">${esc(f.blurb)}</span>
-      </button>`).join('')}</div>
+    <div class="section-head"><span class="kicker no">01</span><h2>By publisher</h2>
+      <span class="kicker aside">Characters, ${term('imprints', 'imprint')} and the full catalogue</span></div>
+    <div id="houses">${skeletons(5, 'repeat(auto-fill,minmax(216px,1fr))')}</div>
 
-    <div class="section-head"><span class="kicker no">02</span><h2>By kind</h2>
+    <div class="section-head"><span class="kicker no">02</span><h2>By format</h2>
+      <span class="kicker aside">Spine width to scale, against a standard paperback</span></div>
+    <div id="formats">${skeletons(6, 'repeat(auto-fill,minmax(236px,1fr))')}</div>
+
+    <div class="section-head"><span class="kicker no">03</span><h2>By kind</h2>
       <span class="kicker aside">Which way the pages turn</span></div>
     <div class="kind-grid">
       <button class="kind-card" data-kind="comic">
@@ -245,26 +269,39 @@ routes.browse = async () => {
           <span class="page"></span><span class="page"></span>
           <span class="arrow">${arrowSvg(true)}</span>
         </span>
-        <span class="disp format-name">Manga</span>
+        <span class="disp format-name">${term('Manga', 'manga')}</span>
         <span class="format-blurb">Japanese publishers. Right to left, usually black and white, sold in volumes.</span>
       </button>
-    </div>
+    </div>`;
 
-    <div class="section-head"><span class="kicker no">03</span><h2>By publisher</h2>
-      <span class="kicker aside">Characters, imprints and the full catalogue</span></div>
-    <div id="houses">${skeletons(5, 'repeat(auto-fill,minmax(200px,1fr))')}</div>`;
+  api('/api/publishers').then(({ items }) => {
+    document.querySelector('#houses').innerHTML = `<div class="house-grid">${
+      items.map((house) => `
+        <button class="house-tile" data-publisher="${esc(house.name)}">
+          <span class="house-logo">${house.logo
+            ? `<img src="${esc(house.logo)}" alt="" loading="lazy" />`
+            : `<span class="disp" style="font-size:26px">${esc(house.name.slice(0, 2))}</span>`}</span>
+          <span class="disp house-name">${esc(house.name)}</span>
+          ${house.deck ? `<span class="format-blurb">${esc(house.deck.slice(0, 90))}…</span>` : ''}
+          <span class="kicker">${house.lines.length} imprints &middot; browse →</span>
+        </button>`).join('')}</div>`;
+  }).catch(() => {});
 
-  const { items } = await api('/api/publishers');
-  document.querySelector('#houses').innerHTML = `<div class="house-grid">${
-    items.map((house) => `
-      <button class="house-tile" data-publisher="${esc(house.name)}">
-        <span class="house-logo">${house.logo
-          ? `<img src="${esc(house.logo)}" alt="" loading="lazy" />`
-          : `<span class="disp" style="font-size:26px">${esc(house.name.slice(0, 2))}</span>`}</span>
-        <span class="disp house-name">${esc(house.name)}</span>
-        ${house.deck ? `<span class="format-blurb">${esc(house.deck.slice(0, 90))}…</span>` : ''}
-        <span class="kicker">${house.lines.length} imprints &middot; browse →</span>
-      </button>`).join('')}</div>`;
+  api('/api/formats').then(({ items }) => {
+    document.querySelector('#formats').innerHTML = `<div class="format-grid">${
+      items.map((f) => `
+        <button class="format-card" data-format="${esc(f.name)}">
+          <span class="format-top">
+            ${f.cover ? `<img class="format-cover" src="${esc(f.cover)}" alt="" loading="lazy" />` : ''}
+            <span class="shelf-row">
+              <span class="book" style="width:${f.spine}px"></span>
+              <span class="book ghost"></span><span class="book ghost"></span>
+            </span>
+          </span>
+          <span class="disp format-name">${term(f.name)}</span>
+          <span class="format-blurb">${esc(f.blurb)}</span>
+        </button>`).join('')}</div>`;
+  }).catch(() => {});
 };
 
 function arrowSvg(rtl) {
@@ -393,9 +430,10 @@ routes.search = async (encoded, scoped) => {
     state.query = query;
     state.filters = { format: 'all', medium: 'all', publisher: 'all', sort: 'relevance', ...(state.pendingFilters ?? {}) };
     state.pendingFilters = null;
-    books.innerHTML = `<div class="section-head"><h2>Books</h2>
+    books.innerHTML = `<div class="section-head"><h2>Titles</h2>
         <span class="kicker aside" id="count"></span></div>
       <div class="filters" id="filters"></div>
+      <p class="sort-note kicker" id="sort-note"></p>
       <div id="results">${skeletons(10)}</div>`;
     await loadBooks();
   } catch (error) {
@@ -450,8 +488,23 @@ function renderFilters() {
     perPageSelect('search-size');
 }
 
+// Says plainly where the order comes from. ComicVine has no ratings, so any
+// ordering beyond text matching is ours and should be labelled as ours.
+const SORT_NOTES = {
+  relevance: 'Closest title match first, then <b>notability</b> to break ties.',
+  notable: 'Ranked by <b>notability</b> — our own measure, not a rating.',
+  newest: 'Most recently started series first.',
+  issues: 'Longest runs first.',
+  title: 'Alphabetical.',
+};
+
 function renderResults() {
   const { publisher, sort } = state.filters;
+  const note = document.querySelector('#sort-note');
+  if (note) {
+    note.innerHTML = (SORT_NOTES[sort] || '')
+      .replace('<b>notability</b>', term('notability', 'notability'));
+  }
   // Format is applied server-side by loadBooks(); only publisher narrows here.
   let list = state.results.filter((x) => publisher === 'all' || x.publisher === publisher);
   // "Best match" is text relevance first, then notability — how well known the
