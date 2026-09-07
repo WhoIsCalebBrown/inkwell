@@ -86,6 +86,12 @@ async function comicVine(resource, params = {}) {
   const response = await fetch(`https://comicvine.gamespot.com/api/${resource}/?${query}`, {
     headers: { 'User-Agent': 'ComicRequester/1.0 (personal media server)' }, signal: AbortSignal.timeout(20_000),
   });
+  // ComicVine rate-limits with 420 ("enhance your calm") and 429. Naming it
+  // matters: a bare status looks like a bug rather than throttling, and the
+  // answer is to lean harder on the cache, not to retry into the limit.
+  if (response.status === 420 || response.status === 429) {
+    throw new Error('ComicVine is rate-limiting us; cached results only for a while.');
+  }
   if (!response.ok) throw new Error(`ComicVine returned HTTP ${response.status}`);
   const body = await response.json();
   if (body.status_code !== 1) throw new Error(body.error || 'ComicVine rejected the request.');
