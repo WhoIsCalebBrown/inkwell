@@ -49,8 +49,46 @@ const GLOSSARY = {
 
 // An explicit affordance rather than a dotted underline: a small ⓘ that says
 // there is something to read here. Placed anywhere a term might not be obvious.
+// Two different kinds of not-knowing, and they need different answers.
+// GLOSSARY is vocabulary the comics industry owns: a reader may simply never
+// have met the word "omnibus". SOURCES is where a list on this page came from
+// and how it was matched — Panel's own workings, published rather than
+// implied. A reader who can see that a shelf is a name match and not a
+// name match and not a recorded fact can tell us it is wrong and say why;
+// without that, the only available complaint is "this looks random".
+const SOURCES = {
+  'connected books': 'Books whose ComicVine record names this person — in its list of who made the book, or who appears in it. Panel never guesses from a title: if a book is here, ComicVine put the name on it.',
+  'team books': 'ComicVine records who appears in a book one character at a time and never by team, so these are series whose title matches the team’s name. That is a weaker match than a name on a record, and it can catch an unrelated book with the same words in it.',
+  'core roster': 'Wikidata’s line-up for this team: a short, edited list of who is in it. ComicVine’s own list runs to hundreds of names across every era, which is why it is kept separate below.',
+  'recorded members': 'Everyone ComicVine has ever filed as a member of this team, across every era. Long, unordered, and useful for finding somebody you half-remember.',
+  lore: 'Wikidata — the open database behind Wikipedia’s infoboxes. Only what it states outright: who created the character, which universe they belong to, their teams and family. Panel works nothing out for itself here.',
+  requests: 'Your Mylar watchlist, joined with what Komga has actually imported. Mylar reports what it is looking for and downloading; Komga is the proof a book arrived and can be read.',
+  downloads: 'Mylar’s direct-download queue, read from its own queue page. Mylar reports a state and a size but never a byte count, so there is no percentage to show — how long a file has held its state is the honest signal.',
+  recently: 'Books Mylar finished and imported, and any time its download queue stopped moving. Panel checks every five minutes so this is here when you come back.',
+  'still waiting': 'Which of your indexers Mylar has tried, when it last tried, and when it is next scheduled to. Read from Mylar’s own database.',
+  publishers: 'A fixed list of houses and their imprints, with cover art taken from books already in your local catalogue. No provider call is made to draw this page.',
+  eras: 'Grouped by the year each book was published, from your own catalogue. Nothing external is consulted.',
+  'browse events': 'A curated list of well-known crossovers, looked up once in ComicVine and then kept. ComicVine cannot sort by popularity, so a hand-written list is the only way to lead with names you would recognise.',
+  'browse teams': 'A curated list of well-known teams, looked up once in ComicVine and then kept. ComicVine reports no popularity figure for teams at all, so they cannot be ranked automatically.',
+  'browse characters': 'Curated well-known names first, then whoever else your own catalogue has learned from books you have opened.',
+  'browse creators': 'A curated list of notable writers and artists, looked up once in ComicVine and then kept.',
+  'all titles': 'Every volume ComicVine files under this publisher, newest first. The list of ids comes from the publisher’s own record, then a page at a time is filled in with details.',
+  'universes & imprints': 'Publishing lines within this house, as Panel has them written down. Choosing one filters the catalogue below by imprint.',
+  'search results': 'ComicVine’s search, re-ranked by Panel: an exact title wins, then all of your words, then a publisher or year you named. Your local catalogue answers first and is topped up from ComicVine.',
+  'local catalogue': 'Everything Panel has kept from providers, on disk. It grows only from things you searched, opened, followed or requested — Panel never crawls.',
+  'good places to start': 'Curated starting points, filled from books already in your catalogue. They are a way in, not a recommendation engine — Panel does not track what you read.',
+  'request scope': 'What pressing Request will actually hand to Mylar, spelled out before you press it. Nothing is queued until you confirm a selection.',
+  'created by': 'The writers and artists ComicVine lists on this book’s own record. Opening one shows every other book its record names them on.',
+  featuring: 'The characters ComicVine lists on this book’s record. It describes the book as a whole, not each issue inside it — a name here does not mean they appear on every page.',
+};
+
+const explain = (key) => {
+  const term = String(key).toLowerCase();
+  return GLOSSARY[term] ?? SOURCES[term] ?? '';
+};
+
 const info = (key, align = '') => {
-  const tip = GLOSSARY[String(key).toLowerCase()];
+  const tip = explain(key);
   if (!tip) return '';
   return `<button type="button" class="info ${align}" data-tip="${esc(tip)}"
     aria-label="What does ${esc(key)} mean?">
@@ -60,7 +98,7 @@ const info = (key, align = '') => {
 };
 
 const term = (text, key = text) => {
-  const tip = GLOSSARY[String(key).toLowerCase()];
+  const tip = explain(key);
   return tip ? `<span class="term" tabindex="0" data-tip="${esc(tip)}">${esc(text)}</span>` : esc(text);
 };
 
@@ -371,7 +409,7 @@ routes.discover = async () => {
       ${skeletonRail(7)}
     </div>
     <div id="starter-paths">
-      <div class="section-head"><span class="kicker no">02</span><h2>Good places to start</h2>
+      <div class="section-head"><span class="kicker no">02</span><h2>Good places to start ${info('good places to start')}</h2>
         <span class="kicker aside">Built from your local catalogue</span></div>
       ${skeletonRail(5)}
     </div>
@@ -399,7 +437,7 @@ routes.discover = async () => {
 
   const starterPaths = document.querySelector('#starter-paths');
   api('/api/discover/paths').then(({ paths }) => {
-    starterPaths.innerHTML = `<div class="section-head"><span class="kicker no">02</span><h2>Good places to start</h2>
+    starterPaths.innerHTML = `<div class="section-head"><span class="kicker no">02</span><h2>Good places to start ${info('good places to start')}</h2>
       <span class="kicker aside">Grows from titles you have explored</span></div>
       <div class="path-grid">${paths.map((path, index) => {
         const art = path.items.filter((item) => item.cover).slice(0, 3);
@@ -657,22 +695,22 @@ routes.browse = async () => {
       title: 'Start with a house,<br />a team, an <em>event</em>, an era.',
     })}
 
-    <div class="section-head"><span class="kicker no">01</span><h2>Publishers</h2>
+    <div class="section-head"><span class="kicker no">01</span><h2>Publishers ${info('publishers')}</h2>
       <span class="kicker aside">Every house, its lines and its full catalogue</span></div>
     <div id="houses" class="house-grid">${
       '<div class="house-tile skeleton-tile"></div>'.repeat(5)}</div>
 
-    <div class="section-head"><span class="kicker no">02</span><h2>Events</h2>
+    <div class="section-head"><span class="kicker no">02</span><h2>Events ${info('browse events')}</h2>
       <span class="kicker aside">Crossovers that run through several titles at once</span></div>
     <div id="browse-events">${skeletonRail(7)}</div>
 
     ${/* Eras come out of the local mirror, so this section keeps working while
           ComicVine is cooling down and the rest of the app has gone quiet. */ ''}
-    <div class="section-head"><span class="kicker no">03</span><h2>Teams</h2>
+    <div class="section-head"><span class="kicker no">03</span><h2>Teams ${info('browse teams')}</h2>
       <span class="kicker aside">Line-ups from Wikidata, not ComicVine's guesswork</span></div>
     <div id="browse-teams">${skeletonRail(7)}</div>
 
-    <div class="section-head"><span class="kicker no">04</span><h2>Eras</h2>
+    <div class="section-head"><span class="kicker no">04</span><h2>Eras ${info('eras')}</h2>
       <span class="kicker aside">From your own catalogue — no ComicVine needed</span></div>
     <div id="decades" class="house-grid">${
       '<div class="house-tile skeleton-tile"></div>'.repeat(5)}</div>`;
@@ -762,7 +800,7 @@ function loreChip(item, group) {
 function renderLore(slot, lore) {
   if (!slot.isConnected || !lore.available) { slot.remove(); return; }
   slot.innerHTML = `<section class="lore-profile">
-    <div class="section-head"><span class="kicker no">${slot.dataset.loreNo}</span><h2>Lore</h2>
+    <div class="section-head"><span class="kicker no">${slot.dataset.loreNo}</span><h2>Lore ${info('lore')}</h2>
       <a class="kicker lore-source" href="https://www.wikidata.org/wiki/${encodeURIComponent(lore.entity)}"
         target="_blank" rel="noreferrer">Structured relationships from Wikidata ↗</a></div>
     ${lore.description ? `<p class="lore-summary">${esc(lore.description)}</p>` : ''}
@@ -793,7 +831,7 @@ routes.threads = async () => {
   view.innerHTML = `${lede('threads', {
       kicker: 'Characters &amp; creators',
       title: 'Follow a <em>person</em>,<br />not an issue number.',
-      body: 'Characters, creators, teams and the events that cross between them. Open one to see the books it is credited on.',
+      body: 'Characters, creators, teams and the events that cross between them. Open one to see the books ComicVine names them in.',
     })}${skeletonRail(7)}`;
 
   const { groups } = await api('/api/threads/browse');
@@ -832,7 +870,7 @@ routes.threads = async () => {
   shown.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
 
   view.innerHTML = view.querySelector('.lede').outerHTML + shown.map((group) => `
-    <div class="section-head"><h2>${esc(group.label)}</h2>
+    <div class="section-head"><h2>${esc(group.label)} ${info(`browse ${group.label.toLowerCase()}`)}</h2>
       <span class="kicker aside">${esc(aside[group.label] || '')}</span></div>
     <div class="rail" data-thread-kind="${esc(group.kind)}">${
       group.items.map((item) => threadCard(item)).join('')
@@ -853,7 +891,7 @@ routes.threads = async () => {
       const merged = [...items, ...tail];
       rail.innerHTML = merged.length
         ? merged.map((item) => threadCard(item)).join('')
-        : '<div class="empty">Nothing here yet — open a book and its credits will fill this in.</div>';
+        : '<div class="empty">Nothing here yet — open a book and the people it names will fill this in.</div>';
     });
   }));
 };
@@ -929,7 +967,7 @@ routes.publisher = async (encoded, pageArg) => {
     </div>
 
     ${house.lines.length ? `
-      <div class="section-head"><span class="kicker no">01</span><h2>Universes &amp; imprints</h2>
+      <div class="section-head"><span class="kicker no">01</span><h2>Universes &amp; imprints ${info('universes & imprints')}</h2>
         <span class="kicker aside">${info('imprint', 'right')}</span></div>
       <div class="chips">${house.lines.map((line) => `
         <button class="chip kicker" data-search="${esc(`${name} ${line}`)}">${esc(line)}</button>`).join('')}</div>` : ''}
@@ -937,7 +975,7 @@ routes.publisher = async (encoded, pageArg) => {
     <div id="pub-chars-${slug}"></div>
     <div id="pub-teams-${slug}"></div>
 
-    <div class="section-head"><span class="kicker no">04</span><h2>All titles</h2>
+    <div class="section-head"><span class="kicker no">04</span><h2>All titles ${info('all titles')}</h2>
       <div class="aside filters" style="border:0;padding:0;grid-template-columns:auto">${perPageSelect('pub-size')}</div></div>
     ${data.source === 'local-cache'
       ? '<p class="sort-note kicker">ComicVine is temporarily unavailable. Showing the saved local catalogue, not the publisher’s full list.</p>'
@@ -1169,22 +1207,22 @@ routes.thread = async (kind, id, encodedName) => {
            affiliations are rendered by the stronger Wikidata profile below. */ ''}
     ${showNativeConnections ? `
       <div class="section-head"><span class="kicker no">01</span>
-        <h2>${kindLabel === 'Team' ? 'Core roster' : 'Also appears with'}</h2>
+        <h2>${kindLabel === 'Team' ? 'Core roster' : 'Also appears with'} ${info(kindLabel === 'Team' ? 'core roster' : 'connected books')}</h2>
         <span class="kicker aside">${kindLabel === 'Team'
           ? 'Verified relationships from Wikidata' : 'Teams and groups'}</span></div>
       ${kindLabel === 'Team' ? memberRoster(thread.teams) : `<div class="chips">${thread.teams.map(relationshipChip).join('')}</div>`}
       ${thread.lineUpSource === 'lore'
-        ? '<p class="sort-note kicker">Wikidata supplies the core roster. Open a member for their own lore and credited books.</p>'
+        ? '<p class="sort-note kicker">Wikidata supplies the core roster. Open a member for their own lore and the books they are named in.</p>'
         : ''}` : ''}
     ${hasHistoricMembers ? `
-      <div class="section-head"><span class="kicker no">02</span><h2>Recorded members</h2>
+      <div class="section-head"><span class="kicker no">02</span><h2>Recorded members ${info('recorded members')}</h2>
         <span class="kicker aside">Across different eras</span></div>
       <p class="sort-note kicker">ComicVine’s wider, time-spanning list — useful for finding people such as Jubilee and Rogue, but not presented as one current line-up.</p>
       ${memberRoster(thread.historicMembers)}` : ''}
     ${hasLore ? `<div id="thread-lore" data-lore-no="${loreNo}"></div>` : ''}
     <div class="section-head"><span class="kicker no">${connectedNo}</span>
-      <h2>Connected books</h2><span class="kicker aside">${kind === 'team'
-        ? 'Series found by this team’s name' : 'Actual saved ComicVine credits'}</span></div>
+      <h2>Connected books ${info(kind === 'team' ? 'team books' : 'connected books')}</h2><span class="kicker aside">${kind === 'team'
+        ? 'Series matched by name' : 'Books whose record names them'}</span></div>
     <div id="thread-books">${skeletons(12)}</div>`;
 
   // This is intentionally after the profile paint: Wikidata enriches a
@@ -1209,7 +1247,7 @@ routes.thread = async (kind, id, encodedName) => {
       // interleaving them here showed Essential X-Men to someone who had
       // opened Guardians of the Galaxy.
       const note = source === 'team-series'
-        ? `<p class="sort-note kicker">ComicVine files no credits against a team, so these are series found by the name ${esc(thread.name)}. Open a member above for their own credited books.</p>`
+        ? `<p class="sort-note kicker">ComicVine keeps no record of which books a team is in — only which books each character is in — so these are series whose title matches ${esc(thread.name)}. Open a member above for the books their own record names them in.</p>`
         : '';
       const shown = applyContentFilter(items);
       document.querySelector('#thread-books').innerHTML = items.length
@@ -1383,7 +1421,7 @@ function searchStateHtml(activity) {
       ? `Mylar looks again ${relativeTime(search.nextSweep)}.`
       : 'Mylar has no scheduled search on the books.';
   return `<div class="search-state">
-    <div><b>${plural(waiting, 'part')} waiting on a search.</b>
+    <div><b>${plural(waiting, 'part')} waiting on a search. ${info('still waiting')}</b>
       <p>${providers ? `${plural(providers, 'provider')} tried, most recently ${esc(relativeTime(search.lastRun))}. Nothing matched.` : 'No providers have run yet.'} ${esc(next)}</p></div>
     <button class="secondary" data-search-now>Search now</button>
   </div>`;
@@ -1405,7 +1443,7 @@ function eventWhen(event) {
 function activityHtml(events) {
   if (!events?.items?.length) return '';
   return `<section class="request-activity">
-    <div class="section-head"><span class="kicker no">03</span><h2>Recently</h2>
+    <div class="section-head"><span class="kicker no">03</span><h2>Recently ${info('recently')}</h2>
       <span class="kicker aside">${events.pushing ? 'Also pushed to your notifier' : 'Panel is not pushing these anywhere'}</span></div>
     <div class="event-list">${events.items.slice(0, 6).map((event) => `<div class="event-row${event.kind === 'stalled' ? ' warn' : ''}">
       ${/* Mylar's own wall clock when it has one: this browser shares that
@@ -1553,7 +1591,7 @@ function downloadLine(entry) {
     ? `<span class="kicker">${plural(entry.waitingFiles, 'more file')} in the queue</span>` : '';
   if (!file) return waiting ? `<div class="entry-download">${waiting}</div>` : '';
   return `<div class="entry-download${file.state === 'Downloading' ? ' running' : ''}">
-    <span class="kicker">${esc(file.label)}${file.size ? ` · ${esc(file.size)}` : ''}${
+    <span class="kicker">${info('downloads')} ${esc(file.label)}${file.size ? ` · ${esc(file.size)}` : ''}${
       file.source ? ` · via ${esc(file.source)}` : ''}${
       file.changed ? ` · ${esc(sinceLabel(file.changed))} in this state` : ''}</span>
     <span class="entry-download-actions">
@@ -1623,7 +1661,7 @@ routes.library = async () => {
       <div><span class="kicker">Still searching ${info('searching')}</span><b class="disp" style="color:var(--accent)">${counts.searching}</b></div>
     </div>
     <section class="request-activity">
-      <div class="section-head"><span class="kicker no">01</span><h2>Requests</h2>
+      <div class="section-head"><span class="kicker no">01</span><h2>Requests ${info('requests')}</h2>
         <span class="kicker aside" id="queue-summary">${queueSummary(queue)}</span>
         <button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>
       <p class="request-explainer">Everything you have asked Mylar for. A book stays here from the search, through the download, to the shelf — <em>Read</em> opens it in Komga.</p>
@@ -1687,7 +1725,7 @@ routes.settings = async () => {
         <article class="connection"><span class="kicker">Supplement</span><b>Metron</b><p class="status ${health.metron?.available ? 'good' : 'muted'}">${esc(metron)}</p><small>Optional story-arc data. No token is required for Panel to work.</small></article>
       </div>
     </section>
-    <section class="settings-section"><div class="section-head"><span class="kicker no">04</span><h2>Local catalogue</h2><span class="kicker aside">${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</span></div>
+    <section class="settings-section"><div class="section-head"><span class="kicker no">04</span><h2>Local catalogue ${info('local catalogue')}</h2><span class="kicker aside">${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</span></div>
       <div class="cache-card"><div><b>Builds a local catalogue as you browse</b><p>Every ComicVine result Panel sees is kept in SQLite: volumes, characters, creators, teams, events and their known links. Repeat searches use local data first, then only ask ComicVine for information Panel has not learned yet.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div>
       <div class="cache-card enrichment-card"><div><b>Gentle enrichment is ${enrich.pending ? 'waiting' : 'caught up'}</b><p>${enrich.pending || 0} title${enrich.pending === 1 ? '' : 's'} queued · ${enrich.done || 0} enriched. Panel slowly fills in detail only for things you searched, opened, followed or requested. It pauses automatically when ComicVine rate-limits.</p></div></div>
       <p class="settings-note">Clearing response cache does not erase the local catalogue, its relationship links, requests, downloads or Mylar settings.</p>
@@ -1737,8 +1775,8 @@ async function openVolume(id) {
     // is not a claim that the named character appears in each individual issue.
     const relatedSection = (groups, heading) => groups?.length ? `<section class="sheet-related">
       <div class="section-head"><span class="kicker no">More</span><h2>${esc(heading)}</h2></div>
-      <p class="sort-note kicker">ComicVine volume records list this credit; this is not an issue-by-issue appearance claim.</p>
-      ${groups.map((group) => `<div class="related-group"><button class="chip kicker" ${threadAttrs(group)}>${esc(group.name)} · credited by ComicVine →</button>
+      <p class="sort-note kicker">ComicVine names them on the book as a whole. It is not a claim that they appear in every issue of it.</p>
+      ${groups.map((group) => `<div class="related-group"><button class="chip kicker" ${threadAttrs(group)}>${esc(group.name)} · named by ComicVine →</button>
         <div class="rail">${group.items.map(volumeCard).join('')}</div></div>`).join('')}
     </section>` : '';
     sheetBody.innerHTML = `
@@ -1770,12 +1808,12 @@ async function openVolume(id) {
           <div class="plain"><span class="kicker" style="color:var(--accent)">In plain English</span>
             <p style="margin:6px 0 0;color:var(--body);line-height:1.6">${esc(explain)}</p></div>
           ${item.creators?.length ? `<div class="credits">
-            <span class="kicker">Created by</span>
+            <span class="kicker">Created by ${info('created by')}</span>
             <div class="chips">${item.creators.map((c) =>
               `<button class="chip kicker" ${threadAttrs({ kind: 'person', id: c.id, name: c.name })}>${esc(c.name)}</button>`).join('')}</div>
           </div>` : ''}
           ${item.characters?.length ? `<div class="credits">
-            <span class="kicker">Featuring</span>
+            <span class="kicker">Featuring ${info('featuring')}</span>
             <div class="chips">${item.characters.map((c) =>
               `<button class="chip kicker" ${threadAttrs({ kind: 'character', id: c.id, name: c.name })}>${esc(c.name)}</button>`).join('')}</div>
           </div>` : ''}
@@ -1799,13 +1837,13 @@ async function openVolume(id) {
           </div>
           ${item.owned ? `<p class="picker-note owned">Already on your shelf${
             item.owned.books ? ` — ${plural(item.owned.books, 'book')}${item.owned.unread ? `, ${item.owned.unread} unread` : ''}` : ''}.</p>` : ''}
-          <p class="action-scope"><b>Request</b> ${esc(requestScope)}${isCollection ? ''
+          <p class="action-scope">${info('request scope')} <b>Request</b> ${esc(requestScope)}${isCollection ? ''
             : ' <b>Follow this series</b> adds it to Mylar’s watchlist and keeps taking every future issue.'}</p>
           ${canChooseParts ? `<div id="collection-request" class="collection-request" data-part-noun="${partNoun}" data-collection="${isCollection}"></div>` : ''}
         </div>
       </div>
-      ${relatedSection(item.related?.creators, 'Volume credits for these creators')}
-      ${relatedSection(item.related?.characters, 'Volume credits for these characters')}`;
+      ${relatedSection(item.related?.creators, 'Books that name these creators')}
+      ${relatedSection(item.related?.characters, 'Books that name these characters')}`;
   } catch (error) {
     sheetBody.innerHTML = `<div class="sheet-top"><span class="kicker">${esc(error.message)}</span></div>`;
   }
@@ -2030,8 +2068,20 @@ document.addEventListener('click', async (event) => {
     setPoster(150); setPageSize(48); applyAccessibility(); toast('Panel preferences reset.'); render();
     return;
   }
-  // The ⓘ is a button inside clickable cards; it explains, it does not navigate.
-  if (event.target.closest('.info')) { event.preventDefault(); event.stopPropagation(); return; }
+  // The ⓘ is a button inside clickable cards; it explains, it does not
+  // navigate. On a touch screen there is no hover to open it with, and this
+  // handler used to swallow the tap and show nothing at all — so the icons
+  // were decoration on the device Panel is mostly read on.
+  const tipButton = event.target.closest('.info, .term');
+  if (tipButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const opening = !tipButton.classList.contains('open');
+    closeTips();
+    if (opening) { placeTip(tipButton); tipButton.classList.add('open'); }
+    return;
+  }
+  closeTips();
   const thread = event.target.closest('[data-thread]');
   if (thread) {
     const name = thread.dataset.threadName;
@@ -2174,6 +2224,16 @@ function placeTip(el) {
   // 290px is the tooltip's max-width; leave a gutter so it never kisses the edge.
   el.classList.toggle('right', left + 306 > document.documentElement.clientWidth);
 }
+function closeTips() {
+  for (const open of document.querySelectorAll('.info.open, .term.open')) open.classList.remove('open');
+}
+// Everything that means "I am done reading that": another tap, a key, the page
+// moving under it. Scroll is passive and only fires while one is open.
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeTips(); });
+window.addEventListener('scroll', () => {
+  if (document.querySelector('.info.open, .term.open')) closeTips();
+}, { passive: true });
+
 document.addEventListener('pointerover', (event) => {
   const tip = event.target.closest?.('.info, .term');
   if (tip) placeTip(tip);

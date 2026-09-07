@@ -232,7 +232,20 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
   scale; that is worth more than the glossary entry beside it.
 - `GLOSSARY` is for vocabulary the comics industry owns (omnibus, Epic
   Collection, Earth-616). Never add an entry for a word Panel itself chose — fix
-  the word instead.
+  the word instead. "Credits" was one of those: it is now "the books ComicVine
+  names them in", everywhere a reader can see it.
+- `SOURCES` is the other half of the same ⓘ: where a list on the page came from
+  and how it was matched. Every section heading that assembles data from
+  somewhere should carry one. It is what lets a reader say "that shelf is wrong
+  *because* it is a name match" rather than "this looks random" — which is the
+  only useful bug report about a data source, and the reason the workings are
+  published rather than implied.
+- **The ⓘ must open on tap.** iPad is a primary device and has no hover; the
+  click handler used to swallow the tap and show nothing, which made every icon
+  decoration on the device Panel is mostly read on. Tap toggles `.open`, another
+  tap, Escape or a scroll closes it, and `placeTip()` flips it away from the
+  right edge (the page clips rather than scrolls, so an unflipped tip would be
+  gone, not merely awkward).
 - Escape everything interpolated into HTML with `esc()`.
 
 ## Running it

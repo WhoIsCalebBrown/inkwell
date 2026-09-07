@@ -456,9 +456,12 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   pointer-events: none; white-space: normal;
 }
 .term:hover::after, .term:focus-visible::after,
-.info:hover::after, .info:focus-visible::after {
+.info:hover::after, .info:focus-visible::after,
+.info.open::after, .term.open::after {
   opacity: 1; visibility: visible; transform: translateY(0);
 }
+/* An opened tip is the one thing on the page you are looking at. */
+.info.open, .term.open { color: var(--accent); }
 /* Near the right edge the popover would run off screen -- and the page clips
    rather than scrolls, so it would be gone rather than merely awkward.
    placeTip() adds this on hover or focus after one measurement. */
@@ -530,48 +533,13 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .pub-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .credits { margin-top: 20px; display: grid; gap: 9px; }
 
-@media (max-width: 720px) { /* ---------- glossary ---------- */
-/* An explicit marker beats a dotted underline: people do not hover text that
-   does not look interactive. */
-.info-inline { color: var(--accent); font-style: normal; }
-.info {
-  display: inline-flex; align-items: center; justify-content: center; vertical-align: -2px;
-  width: 17px; height: 17px; border-radius: 50%; color: var(--muted);
-  position: relative; cursor: pointer; flex: none; min-width: 17px; min-height: 17px;
-  padding: 0 !important; margin: 0; line-height: 1; align-self: center;
+/* The whole glossary block was pasted in here once, inside this phone media
+   query and behind its opening brace. It is defined for every width further
+   up; this is only the handful of rules that are genuinely about a narrow
+   screen. */
+@media (max-width: 720px) {
+  .pub-head { grid-template-columns: 84px 1fr; gap: 18px; }
 }
-.info:hover, .info:focus-visible { color: var(--accent); }
-.info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-.term { border-bottom: 1px dotted currentColor; position: relative; }
-.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.info::after,
-.term::after {
-  content: attr(data-tip);
-  position: absolute; left: 0; top: calc(100% + 9px); z-index: 12;
-  width: max-content; max-width: 290px;
-  background: var(--surface-2); color: var(--text); border: 1px solid var(--rule);
-  padding: 11px 13px; font: 400 12.5px/1.55 var(--ui); letter-spacing: 0;
-  text-transform: none; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
-  opacity: 0; visibility: hidden; transform: translateY(-4px);
-  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s;
-  pointer-events: none; white-space: normal;
-}
-.term:hover::after, .term:focus-visible::after,
-.info:hover::after, .info:focus-visible::after {
-  opacity: 1; visibility: visible; transform: translateY(0);
-}
-/* Near the right edge the popover would run off screen. */
-.info.right::after { left: auto; right: 0; }
-/* A tooltip inside a button must not swallow the click that opens the card. */
-.info { pointer-events: auto; }
-
-/* ---------- browse: formats drawn to scale ---------- */
-/* Fixed columns rather than auto-fill: nine formats and five publishers were
-   wrapping into orphan rows with large dead gaps. 3x3 and 5x1 divide exactly. */
-
-
-.pub-head { grid-template-columns: 84px 1fr; gap: 18px; } }
 
 .sort-note { margin: 12px 0 22px; color: var(--muted); letter-spacing: 0.04em; text-transform: none; font-size: 11.5px; }
 
