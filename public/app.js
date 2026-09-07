@@ -83,8 +83,8 @@ async function render() {
   const [, name, ...rest] = path.split('/');
   const route = routes[name] || routes.discover;
   document.querySelectorAll('#nav button').forEach((b) => {
-    const active = b.dataset.route === name || (name === 'thread' && b.dataset.route === 'browse')
-      || (name === 'search' && b.dataset.route === 'browse');
+    const active = b.dataset.route === name
+      || (['thread', 'search', 'publisher'].includes(name) && b.dataset.route === 'browse');
     b.setAttribute('aria-current', String(active));
   });
   window.scrollTo({ top: 0 });
@@ -189,12 +189,12 @@ routes.browse = async () => {
           ${house.logo ? `<img src="${esc(house.logo)}" alt="${esc(house.name)}" loading="lazy" />` : ''}
         </div>
         <div>
-          <h2 class="disp">${esc(house.name)}</h2>
+          <h2 class="disp"><button data-publisher="${esc(house.name)}" style="all:unset;cursor:pointer">${esc(house.name)}</button></h2>
           <div class="chips">${house.lines.map((line) => `
             <button class="chip kicker" data-search="${esc(`${house.name} ${line}`)}">${esc(line)}</button>`).join('')}</div>
           ${house.browsable ? `<div id="chars-${esc(house.name.replace(/\W+/g, ''))}" class="pub-chars"></div>` : ''}
         </div>
-        <button class="kicker" data-search="${esc(house.name)}" style="white-space:nowrap">Books →</button>
+        <button class="kicker" data-publisher="${esc(house.name)}" style="white-space:nowrap">All books →</button>
       </div>`).join('')}</div>`;
 
   // Each publisher's own characters, confirmed against the record rather than
@@ -216,6 +216,35 @@ routes.browse = async () => {
       })
       .catch(() => { slot.innerHTML = ''; });
   }
+};
+
+routes.publisher = async (encoded, pageArg) => {
+  const name = decodeURIComponent(encoded || '');
+  const page = Math.max(1, Number(pageArg) || 1);
+  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:20px">
+      <span class="kicker" style="color:var(--accent)">Publisher</span>
+      <h1>${esc(name)}</h1>
+    </section>${skeletons(12)}`;
+
+  await loadShelf().catch(() => {});
+  const data = await api(`/api/publisher/${encodeURIComponent(name)}/volumes?page=${page}`);
+  const pager = (position) => `
+    <div class="pager ${position}">
+      ${page > 1 ? `<button class="kicker" data-page="${page - 1}">← Previous</button>` : '<span></span>'}
+      <span class="kicker">Page ${page.toLocaleString()} of ${data.pages.toLocaleString()}
+        · ${data.total.toLocaleString()} volumes</span>
+      ${page < data.pages ? `<button class="kicker" data-page="${page + 1}">Next →</button>` : '<span></span>'}
+    </div>`;
+
+  view.innerHTML = `
+    <section class="lede" style="border:0;padding-bottom:20px">
+      <span class="kicker" style="color:var(--accent)">Publisher · newest first</span>
+      <h1>${esc(name)}</h1>
+    </section>
+    ${pager('top')}
+    <div class="grid">${data.items.map(volumeCard).join('')}</div>
+    ${pager('bottom')}`;
+  state.publisher = { name, page, pages: data.pages };
 };
 
 /* ---------------- search ---------------- */
@@ -503,6 +532,12 @@ document.addEventListener('click', (event) => {
   if (thread) return go(`/thread/${thread.dataset.thread}`);
   const search = event.target.closest('[data-search]');
   if (search) return go(`/search/${encodeURIComponent(search.dataset.search)}`);
+  const house = event.target.closest('[data-publisher]');
+  if (house) return go(`/publisher/${encodeURIComponent(house.dataset.publisher)}`);
+  const pageBtn = event.target.closest('[data-page]');
+  if (pageBtn && state.publisher) {
+    return go(`/publisher/${encodeURIComponent(state.publisher.name)}/${pageBtn.dataset.page}`);
+  }
   const volume = event.target.closest('[data-volume]');
   if (volume) return openVolume(volume.dataset.volume);
   const req = event.target.closest('[data-request]');

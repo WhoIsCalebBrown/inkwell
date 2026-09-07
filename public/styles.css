@@ -157,6 +157,13 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   letter-spacing: 0.03em; padding: 15px 26px; display: inline-flex; align-items: center; gap: 10px; }
 .primary[disabled] { background: var(--surface-2); color: var(--muted); cursor: default; }
 
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 14px 0; }
+.pager.bottom { margin-top: 30px; }
+.pager.top { margin-bottom: 26px; }
+.pager button { border-bottom: 1px solid var(--muted); padding-bottom: 3px; }
+.pager button:hover { color: var(--accent); border-color: var(--accent); }
+
 /* ---------- poster slider ---------- */
 .poster-control { display: flex; align-items: center; gap: 10px; }
 .poster-control input[type='range'] {

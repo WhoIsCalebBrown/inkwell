@@ -435,31 +435,80 @@ app.get('/api/publisher/:name/characters', async (req, res, next) => {
 // Publishers with their lines, logos and character counts. ComicVine's
 // publisher search matches loosely -- "Marvel" also returns Marvel Italia and
 // Marvel UK/Panini UK -- so the exact name wins, falling back to the first hit.
-app.get('/api/publishers', async (_req, res, next) => {
-  try {
-    const items = await cached('publishers:v1', 30 * 24 * 60 * 60_000, async () => {
-      const names = Object.keys(LINES);
-      // ComicVine's own spelling does not always match ours.
-      const CV_NAME = { 'Image Comics': 'Image' };
-      const found = await Promise.all(names.map((name) =>
-        comicVine('publishers', {
-          filter: `name:${CV_NAME[name] ?? name}`, limit: '10', field_list: 'id,name,image,deck',
-        }).catch(() => [])));
-      return names.map((name, index) => {
-        const rows = found[index] ?? [];
-        const CV_NAME = { 'Image Comics': 'Image' };
-        const wanted = CV_NAME[name] ?? name;
-        const exact = rows.find((r) => r.name === wanted) ?? rows[0] ?? null;
-        return {
-          name,
-          lines: LINES[name],
-          logo: exact?.image?.medium_url ?? null,
-          deck: plainText(exact?.deck || '').slice(0, 140) || null,
-          browsable: Boolean(PUBLISHER_SEEDS[name]),
-        };
-      });
+async function loadPublishers() {
+  return cached('publishers:v1', 30 * 24 * 60 * 60_000, async () => {
+    const names = Object.keys(LINES);
+    // ComicVine's own spelling does not always match ours.
+    const CV_NAME = { 'Image Comics': 'Image' };
+    const found = await Promise.all(names.map((name) =>
+      comicVine('publishers', {
+        filter: `name:${CV_NAME[name] ?? name}`, limit: '10', field_list: 'id,name,image,deck',
+      }).catch(() => [])));
+    return names.map((name, index) => {
+      const rows = found[index] ?? [];
+      const wanted = CV_NAME[name] ?? name;
+      // "Marvel" also matches Marvel Italia and Marvel UK, so prefer the exact name.
+      const exact = rows.find((r) => r.name === wanted) ?? rows[0] ?? null;
+      return {
+        name,
+        comicvineId: exact?.id ?? null,
+        lines: LINES[name],
+        logo: exact?.image?.medium_url ?? null,
+        deck: plainText(exact?.deck || '').slice(0, 140) || null,
+        browsable: Boolean(PUBLISHER_SEEDS[name]),
+      };
     });
-    res.json({ items });
+  });
+}
+
+app.get('/api/publishers', async (_req, res, next) => {
+  try { res.json({ items: await loadPublishers() }); } catch (error) { next(error); }
+});
+
+// A publisher's whole catalogue.
+//
+// ComicVine cannot filter volumes by publisher -- filter=publisher:31 returns
+// the same 160,366 rows as no filter at all -- but the publisher DETAIL
+// resource carries its full volume list: 14,156 entries for Marvel, as bare
+// {id, name} in a 3 MB payload. So membership comes from there, and a page of
+// it is hydrated with one id-filtered call (40 volumes in under a second).
+const PAGE_SIZE = 48;
+
+async function publisherVolumeIds(comicvineId) {
+  return cached(`publisher:${comicvineId}:volumeids`, 30 * 24 * 60 * 60_000, async () => {
+    const data = await comicVine(`publisher/4010-${comicvineId}`, { field_list: 'id,name,volumes' });
+    // Ids ascend with age, so newest-first is simply the reverse.
+    return (data.volumes ?? []).map((v) => String(v.id)).reverse();
+  });
+}
+
+app.get('/api/publisher/:name/volumes', async (req, res, next) => {
+  const name = String(req.params.name);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  try {
+    const house = (await loadPublishers()).find((p) => p.name === name);
+    if (!house?.comicvineId) return res.status(404).json({ error: `Unknown publisher "${name}".` });
+    const ids = await publisherVolumeIds(house.comicvineId);
+    const slice = ids.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const [rows, library] = await Promise.all([
+      slice.length
+        ? cached(`volumes:batch:${slice[0]}:${slice.length}`, 7 * 24 * 60 * 60_000, () =>
+            comicVine('volumes', { filter: `id:${slice.join('|')}`, limit: String(PAGE_SIZE), field_list: VOLUME_FIELDS }))
+        : [],
+      watchlist(),
+    ]);
+    const watchedIds = new Set(library.map((x) => x.id));
+    // The batch comes back in ComicVine's order, not ours; restore the page order.
+    const byId = new Map((rows ?? []).map((r) => [String(r.id), r]));
+    const items = slice.map((id) => byId.get(id)).filter(Boolean).map((r) => catalogueShape(r, watchedIds));
+    res.json({
+      publisher: name,
+      page,
+      pageSize: PAGE_SIZE,
+      total: ids.length,
+      pages: Math.ceil(ids.length / PAGE_SIZE),
+      items,
+    });
   } catch (error) { next(error); }
 });
 
