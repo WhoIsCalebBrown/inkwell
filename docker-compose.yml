@@ -14,6 +14,13 @@ services:
       KOMGA_URL: http://192.168.40.44:25600
       KOMGA_CONFIG: /run/komf/application.yml
       CACHE_DB: /data/cache.db
+      # Optional. Marvel's own API supplies real crossover events and a
+      # collection format filter that ComicVine has no equivalent for. Without
+      # these the app falls back to ComicVine and behaves exactly as before.
+      # Keys from https://developer.marvel.com — set them in a .env beside this
+      # file rather than committing them.
+      MARVEL_PUBLIC_KEY: ${MARVEL_PUBLIC_KEY:-}
+      MARVEL_PRIVATE_KEY: ${MARVEL_PRIVATE_KEY:-}
     volumes:
       # Reuses Mylar's API key without copying it into this project or browser.
       - /mnt/cache/appdata/mylar3/mylar/config.ini:/run/mylar/config.ini:ro

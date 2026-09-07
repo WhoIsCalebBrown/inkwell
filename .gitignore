@@ -6,3 +6,6 @@ data/
 
 # Seeded design canvas — rebuildable from design/*.dc.html + canvas.json
 design/panel-comic-app.html
+
+# Marvel API keys are read from the environment, never committed.
+.env

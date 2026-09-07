@@ -282,8 +282,10 @@ function renderResults() {
   if (sort === 'issues') list = [...list].sort((a, b) => b.issues - a.issues);
   if (sort === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title));
   document.querySelector('#count').textContent = `${list.length} of ${state.results.length}`;
+  // #results is a plain container so it can hold either a skeleton grid or the
+  // real one; the grid class has to come from whichever is being rendered.
   document.querySelector('#results').innerHTML = list.length
-    ? list.map(volumeCard).join('')
+    ? `<div class="grid">${list.map(volumeCard).join('')}</div>`
     : '<div class="empty">Nothing matches those filters.</div>';
 }
 
@@ -332,7 +334,43 @@ routes.thread = async (kind, id) => {
         `<button class="chip kicker" data-thread="${esc(t.kind)}/${esc(t.id)}">${esc(t.name)}</button>`).join('')}</div>` : ''}
     <div class="section-head"><span class="kicker no">${thread.teams?.length ? '02' : '01'}</span>
       <h2>Books</h2><span class="kicker aside">Oldest first</span></div>
+    <div id="marvel"></div>
     <div id="thread-books">${skeletons(12)}</div>`;
+
+  // Marvel's API, when keys are configured and this is a Marvel character.
+  // Renders nothing at all otherwise, so the page is identical without it.
+  api(`/api/thread/${kind}/${id}/marvel`)
+    .then((data) => {
+      if (!data.available || (!data.events.length && !data.collections.length)) return;
+      const host = document.querySelector('#marvel');
+      host.innerHTML = `
+        ${data.events.length ? `
+          <div class="section-head"><span class="kicker no">✦</span><h2>Crossover events</h2>
+            <span class="kicker aside">From Marvel — actual shared storylines</span></div>
+          <div class="rail">${data.events.map((e) => `
+            <article class="card">
+              ${coverHtml({ id: e.id, name: e.title, image: e.image })}
+              <div class="meta"><h3>${esc(e.title)}</h3>
+                <span class="sub">${[e.start, e.comics ? `${e.comics} books` : null]
+                  .filter(Boolean).map(esc).join(' · ')}</span>
+                ${e.characters.length ? `<span class="sub">${esc(e.characters.slice(0, 3).join(', '))}</span>` : ''}
+              </div>
+            </article>`).join('')}</div>` : ''}
+        ${data.collections.length ? `
+          <div class="section-head"><span class="kicker no">✦</span><h2>Collected editions</h2>
+            <span class="kicker aside">From Marvel — newest first</span></div>
+          <div class="rail">${data.collections.map((c) => `
+            <article class="card">
+              ${coverHtml({ id: c.id, name: c.title, image: c.image })}
+              <div class="meta">
+                ${c.format ? `<span class="kicker" style="color:var(--accent)">${esc(c.format)}</span>` : ''}
+                <h3>${esc(c.title)}</h3>
+                <span class="sub">${[c.onSale, c.pages ? `${c.pages} pages` : null]
+                  .filter(Boolean).map(esc).join(' · ')}</span>
+              </div>
+            </article>`).join('')}</div>` : ''}`;
+    })
+    .catch(() => {});
 
   // ComicVine cannot list a character's volumes (volume_credits is unreliable
   // and issue_credits runs to five figures), so this is a title search on the

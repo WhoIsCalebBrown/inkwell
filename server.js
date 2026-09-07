@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cached, eager, read as cacheRead } from './store.js';
+import * as marvel from './marvel.js';
 
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -227,7 +228,7 @@ async function shelf() {
 
 app.use(express.json({ limit: '32kb' }));
 app.get('/api/health', async (_req, res) => {
-  try { res.json({ ok: true, watchlist: (await watchlist()).length }); }
+  try { res.json({ ok: true, watchlist: (await watchlist()).length, marvel: marvel.available(), komga: Boolean(komgaUrl && komgaAuth) }); }
   catch (error) { res.status(503).json({ ok: false, error: error.message }); }
 });
 
@@ -289,6 +290,35 @@ app.get('/api/thread/:kind/:id', async (req, res, next) => {
 // Ranking every related character costs ~26 ComicVine calls and about a minute
 // cold, so it is its own endpoint: the card paints immediately and this fills in
 // behind it. Cached for a week, after which it is instant.
+// Marvel's own API answers what ComicVine cannot: real crossover events and a
+// formatType=collection filter that actually means omnibuses and hardcovers.
+// Only meaningful for Marvel threads, and only when keys are configured — the
+// endpoint is always present so the client needs no feature detection.
+app.get('/api/thread/:kind/:id/marvel', async (req, res, next) => {
+  const { kind, id } = req.params;
+  const prefix = THREAD_KINDS[kind];
+  if (!prefix) return res.status(400).json({ error: `Unknown thread kind "${kind}".` });
+  if (!marvel.available()) return res.json({ available: false, reason: 'no-keys' });
+  try {
+    const thread = await cached(`thread:${kind}:${id}`, 7 * 24 * 60 * 60_000, () =>
+      comicVine(`${kind}/${prefix}-${id}`, { field_list: THREAD_FIELDS[kind] }));
+    if (!/^marvel/i.test(thread.publisher?.name ?? '')) {
+      return res.json({ available: false, reason: 'not-marvel' });
+    }
+    // Marvel answers 500 (not 401) for bad keys, so any failure here is treated
+    // as "no enrichment" rather than surfaced: the page must render regardless.
+    const match = await marvel.findCharacter(thread.name).catch(() => null);
+    if (!match) return res.json({ available: false, reason: 'no-match' });
+    const [events, collections] = await Promise.all([
+      marvel.events(match.id).catch(() => []),
+      marvel.collections(match.id).catch(() => []),
+    ]);
+    res.json({ available: true, character: match, events, collections });
+  } catch {
+    res.json({ available: false, reason: 'error' });
+  }
+});
+
 // ComicVine has no imprint/universe resource, so tier 2 of the browse chain is
 // a small curated map. Unknown publishers simply skip the tier.
 const LINES = {
