@@ -221,13 +221,17 @@ routes.browse = async () => {
 routes.publisher = async (encoded, pageArg) => {
   const name = decodeURIComponent(encoded || '');
   const page = Math.max(1, Number(pageArg) || 1);
+  const slug = name.replace(/\W+/g, '');
+
   view.innerHTML = `<section class="lede" style="border:0;padding-bottom:20px">
       <span class="kicker" style="color:var(--accent)">Publisher</span>
       <h1>${esc(name)}</h1>
     </section>${skeletons(12)}`;
 
-  await loadShelf().catch(() => {});
+  const [houses] = await Promise.all([api('/api/publishers'), loadShelf().catch(() => {})]);
+  const house = houses.items.find((h) => h.name === name) ?? { name, lines: [], logo: null };
   const data = await api(`/api/publisher/${encodeURIComponent(name)}/volumes?page=${page}`);
+
   const pager = (position) => `
     <div class="pager ${position}">
       ${page > 1 ? `<button class="kicker" data-page="${page - 1}">← Previous</button>` : '<span></span>'}
@@ -237,14 +241,62 @@ routes.publisher = async (encoded, pageArg) => {
     </div>`;
 
   view.innerHTML = `
-    <section class="lede" style="border:0;padding-bottom:20px">
-      <span class="kicker" style="color:var(--accent)">Publisher · newest first</span>
-      <h1>${esc(name)}</h1>
-    </section>
+    <div class="pub-head">
+      ${house.logo ? `<div class="pub-logo"><img src="${esc(house.logo)}" alt="${esc(name)}" /></div>` : ''}
+      <div>
+        <span class="kicker" style="color:var(--accent)">Publisher</span>
+        <h1 class="disp">${esc(name)}</h1>
+        ${house.deck ? `<p class="deck">${esc(house.deck)}</p>` : ''}
+        <div class="stats" style="border-top:0;margin-top:18px;padding-top:0">
+          <div><span class="kicker">Volumes</span><b class="disp">${data.total.toLocaleString()}</b></div>
+          <div><span class="kicker">Lines</span><b class="disp">${house.lines.length}</b></div>
+        </div>
+      </div>
+    </div>
+
+    ${house.lines.length ? `
+      <div class="section-head"><span class="kicker no">01</span><h2>Universes &amp; imprints</h2></div>
+      <div class="chips">${house.lines.map((line) => `
+        <button class="chip kicker" data-search="${esc(`${name} ${line}`)}">${esc(line)}</button>`).join('')}</div>` : ''}
+
+    <div id="pub-chars-${slug}"></div>
+    <div id="pub-teams-${slug}"></div>
+
+    <div class="section-head"><span class="kicker no">04</span><h2>All books</h2>
+      <span class="kicker aside">Newest first</span></div>
     ${pager('top')}
     <div class="grid">${data.items.map(volumeCard).join('')}</div>
     ${pager('bottom')}`;
+
   state.publisher = { name, page, pages: data.pages };
+
+  // Characters and teams load behind the catalogue: each is several searches,
+  // and the books are what the page is for.
+  const strip = (slot, no, title, aside, endpoint, ratio) => {
+    slot.innerHTML = `<div class="section-head"><span class="kicker no">${no}</span><h2>${title}</h2>
+      <span class="kicker aside">${aside}</span></div><div class="rail">${skeletonCard.repeat(7)}</div>`;
+    api(endpoint)
+      .then(({ items }) => {
+        if (!items.length) { slot.innerHTML = ''; return; }
+        slot.innerHTML = `<div class="section-head"><span class="kicker no">${no}</span><h2>${title}</h2>
+            <span class="kicker aside">${aside}</span></div>
+          <div class="rail">${items.slice(0, 16).map((t) => `
+            <article class="card">
+              <button data-thread="${esc(t.kind)}/${esc(t.id)}" style="all:unset;cursor:pointer">
+                ${coverHtml({ id: t.id, name: t.name, image: t.image }, { ratio })}
+              </button>
+              <div class="meta"><h3>${esc(t.name)}</h3>
+                ${/* ComicVine reports no appearance count for teams; an unqualified
+                      "0 appearances" reads as a fact rather than a missing field. */ ''}
+                ${t.appearances ? `<span class="sub">${t.appearances.toLocaleString()} appearances</span>` : ''}</div>
+            </article>`).join('')}</div>`;
+      })
+      .catch(() => { slot.innerHTML = ''; });
+  };
+  strip(document.querySelector(`#pub-chars-${slug}`), '02', 'Characters', 'Most published first',
+        `/api/publisher/${encodeURIComponent(name)}/characters`, '1 / 1');
+  strip(document.querySelector(`#pub-teams-${slug}`), '03', 'Teams', 'Groups and line-ups',
+        `/api/publisher/${encodeURIComponent(name)}/teams`, '1 / 1');
 };
 
 /* ---------------- search ---------------- */
@@ -489,6 +541,16 @@ async function openVolume(id) {
           <p class="copy">${esc(item.description || 'ComicVine has no description for this listing.')}</p>
           <div class="plain"><span class="kicker" style="color:var(--accent)">In plain English</span>
             <p style="margin:6px 0 0;color:var(--body);line-height:1.6">${esc(explain)}</p></div>
+          ${item.creators?.length ? `<div class="credits">
+            <span class="kicker">Created by</span>
+            <div class="chips">${item.creators.map((c) =>
+              `<button class="chip kicker" data-thread="person/${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>
+          </div>` : ''}
+          ${item.characters?.length ? `<div class="credits">
+            <span class="kicker">Featuring</span>
+            <div class="chips">${item.characters.map((c) =>
+              `<button class="chip kicker" data-thread="character/${esc(c.id)}">${esc(c.name)}</button>`).join('')}</div>
+          </div>` : ''}
           <div class="actions">
             <button class="primary" data-request="${esc(item.id)}" ${owned ? 'disabled' : ''}>
               ${owned ? 'Already on your shelf' : 'Request this volume'}

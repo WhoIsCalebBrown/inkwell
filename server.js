@@ -42,6 +42,12 @@ const cache = new Map();
 // ComicVine detail responses are enormous — a single character document is
 // ~4.9 MB unfiltered and ~218 KB with field_list. Always send one.
 const VOLUME_FIELDS = 'id,name,start_year,count_of_issues,image,publisher,description,deck,site_detail_url,resource_type';
+// Only for the single-volume sheet: creators and cast are genuinely useful and
+// come free in the same call, but they are far too heavy for list responses.
+// ComicVine has no genre field -- its `concepts` are cover-variant bookkeeping
+// ("Variant Cover", "Homage Covers"), not subject matter -- so there is nothing
+// to build a genre facet from.
+const VOLUME_DETAIL_FIELDS = `${VOLUME_FIELDS},people,characters`;
 const THREAD_FIELDS = {
   character: 'id,name,real_name,aliases,deck,image,publisher,count_of_issue_appearances,first_appeared_in_issue,teams,character_friends,character_enemies',
   team: 'id,name,aliases,deck,image,publisher,count_of_issue_appearances,characters,first_appeared_in_issue',
@@ -134,6 +140,14 @@ function notability(item) {
   const issues = Number(item.count_of_issues) || 0;
   // Diminishing returns, so a 160-issue reprint cannot outweigh the real house.
   return weightOf(publisher) * 10 + Math.min(issues, 120);
+}
+
+function truncate(text, limit) {
+  if (!text) return null;
+  if (text.length <= limit) return text;
+  const cut = text.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).replace(/[,;:]$/, '')}…`;
 }
 
 function plainText(value = '') {
@@ -397,6 +411,52 @@ const PUBLISHER_SEEDS = {
   'Boom! Studios': ['lumberjanes', 'something is killing the children', 'once and future'],
 };
 
+// Characters and teams share a shape: seed with recognisable names, then keep
+// only what the API confirms belongs to the house.
+async function publisherThreads(name, resource, seeds) {
+  return cached(`publisher:${normalise(name)}:${resource}`, 7 * 24 * 60 * 60_000, async () => {
+    const pages = await Promise.all(seeds.map((seed) =>
+      comicVine('search', {
+        query: seed, resources: resource, limit: '30',
+        field_list: 'id,name,deck,image,publisher,count_of_issue_appearances',
+      }).catch(() => [])));
+    const seen = new Set();
+    return pages.flat()
+      .filter((x) => x && x.name && x.image?.medium_url)
+      .filter((x) => String(x.publisher?.name || '').startsWith(name.split(' ')[0]))
+      .filter((x) => {
+        const key = normalise(x.name);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => (Number(b.count_of_issue_appearances) || 0) - (Number(a.count_of_issue_appearances) || 0))
+      .slice(0, 24)
+      .map((x) => ({
+        id: String(x.id), kind: resource, name: x.name,
+        publisher: x.publisher?.name ?? null,
+        appearances: Number(x.count_of_issue_appearances) || 0,
+        image: x.image?.medium_url ?? null,
+      }));
+  });
+}
+
+const TEAM_SEEDS = {
+  Marvel: ['avengers', 'x-men', 'fantastic four', 'guardians of the galaxy', 'defenders', 'inhumans'],
+  'DC Comics': ['justice league', 'teen titans', 'suicide squad', 'green lantern corps', 'legion of super-heroes'],
+  'Image Comics': ['savage dragon', 'youngblood', 'cyberforce'],
+  'Dark Horse Comics': ['b.p.r.d.', 'the umbrella academy'],
+  'Boom! Studios': ['lumberjanes'],
+};
+
+app.get('/api/publisher/:name/teams', async (req, res, next) => {
+  const name = String(req.params.name);
+  const seeds = TEAM_SEEDS[name];
+  if (!seeds) return res.json({ publisher: name, items: [] });
+  try { res.json({ publisher: name, items: await publisherThreads(name, 'team', seeds) }); }
+  catch (error) { next(error); }
+});
+
 app.get('/api/publisher/:name/characters', async (req, res, next) => {
   const name = String(req.params.name);
   const seeds = PUBLISHER_SEEDS[name];
@@ -436,7 +496,7 @@ app.get('/api/publisher/:name/characters', async (req, res, next) => {
 // publisher search matches loosely -- "Marvel" also returns Marvel Italia and
 // Marvel UK/Panini UK -- so the exact name wins, falling back to the first hit.
 async function loadPublishers() {
-  return cached('publishers:v1', 30 * 24 * 60 * 60_000, async () => {
+  return cached('publishers:v2', 30 * 24 * 60 * 60_000, async () => {
     const names = Object.keys(LINES);
     // ComicVine's own spelling does not always match ours.
     const CV_NAME = { 'Image Comics': 'Image' };
@@ -696,11 +756,17 @@ app.get('/api/volume/:id', async (req, res, next) => {
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'A numeric ComicVine volume id is required.' });
   try {
     const [data, watched] = await Promise.all([
-      cached(`volume:${id}`, 7 * 24 * 60 * 60_000, () =>
-        comicVine(`volume/4050-${id}`, { field_list: VOLUME_FIELDS })),
+      cached(`volume:detail:${id}`, 7 * 24 * 60 * 60_000, () =>
+        comicVine(`volume/4050-${id}`, { field_list: VOLUME_DETAIL_FIELDS })),
       watchlist(),
     ]);
     const shaped = catalogueShape(data, new Set(watched.map((x) => x.id)));
+    // Credits are ordered by ComicVine's own prominence, so the first few are
+    // the ones a reader would recognise.
+    shaped.creators = (data.people ?? []).slice(0, 8)
+      .map((x) => ({ id: String(x.id), name: x.name, kind: 'person' }));
+    shaped.characters = (data.characters ?? []).slice(0, 12)
+      .map((x) => ({ id: String(x.id), name: x.name, kind: 'character' }));
     // ComicVine stays authoritative for identity; a supplement only fills gaps.
     res.json(supplement(shaped, await supplementsFor(shaped)));
   } catch (error) { next(error); }
