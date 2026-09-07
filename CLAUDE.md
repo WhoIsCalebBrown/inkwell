@@ -94,6 +94,35 @@ Seeded browse lists live under `threads:seeded:<kind>:vN` with a 7-day TTL.
 **Bump the `vN` whenever the seeds or the shaping change**, or you will serve
 the old list for a week.
 
+## Mylar has two interfaces, and Panel needs both
+
+The API (`:8090/api?cmd=`) covers the watchlist, a series' parts, and queueing
+an issue. It has no command for the direct-download queue at all — that lives
+only behind the web UI, unauthenticated on the LAN (`authentication = 0`):
+
+- `GET /queueManageIt` is the queue page's own JSON feed. Rows are positional:
+  `[series, size, progress, status, updated, queueId, issueId, comicId, link]`.
+  `progress` is only ever `100%` or empty — **Mylar does not track bytes for a
+  running transfer**, so there is no percentage to show and no bar to draw.
+- `GET /ddl_requeue?mode=restart_queue` hands every `Queued` row back to the
+  worker; `mode=restart&id=<queueId>` does one row, whatever its status.
+  Also `abort`, `remove`, `clear_queue`.
+
+**The failure this exists for:** the DDL queue has one worker. If Mylar restarts
+mid-download, that row stays marked `Downloading` forever, nothing picks the
+rest up, and every later request sits at `Queued` behind it — indefinitely, with
+nothing in the log after the restart. From the request list that is
+indistinguishable from a search that never found anything. It had 12 files
+wedged behind one dead row for a day before Panel could see it.
+
+`updated_date` is written in Mylar's local time, which the browser shares and
+the container does not. Parse it in the front end, never on the server.
+
+GetComics mirrors are tried in `ddl_priority_order` (mega, mediafire,
+pixeldrain, main). Mega commonly answers `ETOOMANY` for hours at a time; Mylar
+falls through to the next mirror on its own, so a Mega failure in the log is
+not a fault to fix.
+
 ## Performance rules
 
 The app is used on desktop, iPad and phone. Assume the iPad is the slow one.

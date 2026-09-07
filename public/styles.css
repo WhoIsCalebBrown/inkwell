@@ -270,6 +270,26 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 .request-unfurl:hover { color: var(--accent); }
 .request-part small:empty { display: none; }
 
+/* ---------- downloads ---------- */
+/* Mylar gives a state and a size, never a byte count, so there is no bar to
+   draw. The running row is marked by a moving rule instead: it says "this one
+   is live" without claiming to know how far along it is. */
+.download-panel:empty { display: none; }
+.download-list { border: 1px solid var(--rule); background: var(--surface); }
+.download-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 20px;
+  align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--rule); }
+.download-row:last-child { border-bottom: 0; }
+.download-row b { display: block; font-size: 13px; }
+.download-row small { color: var(--muted); font-size: 11px; }
+.download-state { text-align: right; display: grid; gap: 3px; }
+.download-row.running { position: relative; }
+.download-row.running::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent); animation: download-pulse 2.4s ease-in-out infinite; }
+@keyframes download-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .download-row.running::before { animation: none; opacity: 1; } }
+.download-warning { max-width: 76ch; margin: -8px 0 18px; color: var(--body); font-size: 13px;
+  line-height: 1.6; border-left: 2px solid var(--accent); padding-left: 14px; }
+
 /* ---------- chips ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { border: 1px solid var(--rule); padding: 8px 12px; color: var(--body); }
@@ -600,6 +620,8 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   .connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .path-grid { grid-template-columns: 1fr 1fr; }
   .request-part { grid-template-columns: 1fr; }
+  .download-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .download-row .secondary { grid-column: 2; justify-self: end; }
   .request-series-head { grid-template-columns: 46px minmax(0, 1fr); }
   .request-series-head .secondary { grid-column: 2; justify-self: start; }
   .request-series-cover .cover { width: 46px; }

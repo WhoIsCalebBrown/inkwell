@@ -661,6 +661,99 @@ async function refreshRequestParts() {
   }
 }
 
+// Mylar's API answers for what was asked for and what eventually arrived, but
+// it has no command for the part in between. Its direct-download queue lives
+// only behind the web UI -- so Panel reads that page's own JSON feed, on the
+// same host and port as the API, and uses the button beside it to retry.
+//
+// This matters more than it sounds. The queue is served by a single worker: if
+// Mylar restarts mid-download the row stays marked Downloading forever, no
+// worker ever picks the rest up, and every later request simply sits at Queued
+// behind it. From the outside that looks exactly like a request that was never
+// searched for. Panel could not tell the difference until now.
+const mylarWebUrl = (process.env.MYLAR_WEB_URL || mylarUrl).replace(/\/api\/?$/, '');
+
+async function mylarWeb(pathname, params = {}) {
+  const query = new URLSearchParams(params);
+  const response = await fetch(`${mylarWebUrl}/${pathname}?${query}`, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Mylar returned HTTP ${response.status}`);
+  const text = await response.text();
+  try { return JSON.parse(text); } catch { return text.trim(); }
+}
+
+// Mylar's own words for a queue row, in the reader's. "Snatched" and "Queued"
+// already mean something else on the requests page -- there they describe a
+// part's search, here a file's transfer -- so these deliberately do not reuse
+// them.
+const DOWNLOAD_STATES = {
+  Queued: 'Waiting its turn',
+  Downloading: 'Downloading',
+  Completed: 'Downloaded',
+  Failed: 'Failed',
+  Aborted: 'Stopped',
+};
+
+// Mylar abbreviates the GetComics mirrors; these are the names the hosts
+// themselves use, which is what a reader would recognise.
+const DOWNLOAD_SOURCES = {
+  'GC-Mega': 'Mega', 'GC-Pixel': 'PixelDrain', 'GC-Media': 'MediaFire',
+  'GC-Main': 'GetComics', 'GC-Mirror': 'GetComics mirror',
+};
+
+// The DataTables feed behind Manage → Download queue. Its rows are positional:
+// [series, size, progress, status, updated, queueId, issueId, comicId, link].
+async function downloadQueue() {
+  const data = await mylarWeb('queueManageIt', { iDisplayStart: '0', iDisplayLength: '300' });
+  const rows = Array.isArray(data?.aaData) ? data.aaData : [];
+  return rows.map(([title, size, progress, status, updated, queueId, issueId, comicId, linkType]) => ({
+    id: String(queueId ?? ''),
+    title: String(title ?? '').trim(),
+    size: String(size ?? '').trim() || null,
+    state: String(status ?? '').trim(),
+    label: DOWNLOAD_STATES[String(status ?? '').trim()] ?? String(status ?? '').trim(),
+    // Mylar only ever reports 100% or nothing at all: it does not track bytes
+    // for a running transfer. Passing its own value through keeps that honest
+    // rather than inventing a bar that does not move.
+    progress: String(progress ?? '').trim() || null,
+    // Left as Mylar wrote it, in Mylar's local time. The browser shares that
+    // clock and the container does not, so the elapsed time is worked out
+    // there rather than here.
+    changed: String(updated ?? '').trim() || null,
+    issueId: String(issueId ?? ''), comicId: String(comicId ?? ''),
+    // Which mirror it is coming from. Mega refuses whole evenings at a time
+    // with ETOOMANY, and knowing that is the difference between "Panel is
+    // broken" and "that host is busy, it will fall through to the next one".
+    source: DOWNLOAD_SOURCES[String(linkType ?? '').trim()] ?? null,
+  })).filter((item) => item.id && item.title);
+}
+
+app.get('/api/downloads', async (_req, res, next) => {
+  try {
+    const items = await downloadQueue();
+    const counted = (state) => items.filter((item) => item.state === state).length;
+    res.json({
+      items,
+      counts: {
+        downloading: counted('Downloading'), waiting: counted('Queued'),
+        done: counted('Completed'), failed: counted('Failed'),
+      },
+    });
+  } catch (error) { next(error); }
+});
+
+// Hand a stalled queue back to Mylar. With no id this restarts every waiting
+// row, which is the only way out of the wedged-worker state above; with one it
+// restarts that row alone, which also covers the item the restart left behind.
+app.post('/api/downloads/retry', async (req, res, next) => {
+  const id = String(req.body?.id ?? '').trim();
+  if (id && !/^\d+$/.test(id)) return res.status(400).json({ error: 'That download id is not valid.' });
+  try {
+    const result = await mylarWeb('ddl_requeue', id ? { mode: 'restart', id } : { mode: 'restart_queue' });
+    const message = typeof result === 'object' && result?.message ? String(result.message) : 'Mylar restarted the queue.';
+    res.json({ ok: true, message });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/requests', async (req, res, next) => {
   try {
     if (req.query.refresh === '1') await refreshRequestParts();

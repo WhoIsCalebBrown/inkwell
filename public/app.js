@@ -1251,6 +1251,109 @@ async function hydrateRequestParts(comicIds) {
   }));
 }
 
+// Mylar reports a download's state and never its byte count, so the only
+// honest answer to "is this actually moving?" is how long the state has held.
+// Three hours on one file is ordinary for a 4GB omnibus off a free mirror.
+// Three hours with nothing downloading at all is the queue having died: its
+// worker is single, and if Mylar restarts mid-transfer the row stays marked
+// Downloading, nothing picks the rest up, and every later request waits behind
+// it forever. That is invisible from the request list, which is why it gets a
+// section of its own.
+const DOWNLOAD_POLL_MS = 20_000;
+const STALL_AFTER_MS = 3 * 60 * 60_000;
+
+// "2026-09-07 15:36", written in Mylar's local time. The browser shares that
+// clock; the server's container does not, which is why this is parsed here.
+function mylarTime(text) {
+  const parts = String(text || '').match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!parts) return null;
+  const [, year, month, day, hour, minute] = parts.map(Number);
+  return new Date(year, month - 1, day, hour, minute);
+}
+
+function sinceLabel(text) {
+  const at = mylarTime(text);
+  if (!at) return '';
+  const minutes = Math.max(0, Math.round((Date.now() - at.getTime()) / 60_000));
+  if (minutes < 90) return `${minutes || 1} min`;
+  const hours = Math.round(minutes / 60);
+  return hours < 36 ? `${hours} hr` : `${Math.round(hours / 24)} days`;
+}
+
+function downloadsHtml(data) {
+  const { items, counts } = data;
+  const active = items.filter((item) => item.state === 'Downloading');
+  const waiting = items.filter((item) => item.state === 'Queued');
+  const failed = items.filter((item) => item.state === 'Failed');
+  if (!items.length) return '';
+  const held = active.map((item) => Date.now() - (mylarTime(item.changed)?.getTime() ?? Date.now()));
+  // Waiting with nothing running is the wedge; a single file held for hours is
+  // the other half of the same failure.
+  const stalled = (waiting.length && !active.length) || held.some((ms) => ms > STALL_AFTER_MS);
+
+  const row = (item) => `<div class="download-row${item.state === 'Downloading' ? ' running' : ''}">
+    <div><b>${esc(item.title)}</b>
+      <small>${esc([item.size, item.source && `via ${item.source}`].filter(Boolean).join(' · '))}</small></div>
+    <div class="download-state">
+      <span class="kicker state${item.state === 'Completed' ? ' owned' : item.state === 'Failed' ? ' attention' : ''}">${esc(item.label)}</span>
+      <small>${esc(item.changed ? `${sinceLabel(item.changed)} in this state` : '')}</small>
+    </div>
+    ${item.state === 'Completed' ? '' : `<button class="secondary" data-retry-download="${esc(item.id)}">Restart</button>`}
+  </div>`;
+
+  return `<div class="section-head"><span class="kicker no">01</span><h2>Downloads</h2>
+      <span class="kicker aside">${
+        active.length ? `${active.length} downloading` : 'Nothing downloading'} · ${
+        waiting.length} waiting · ${counts.done} finished</span>
+      <button class="secondary" data-restart-queue>Restart the queue</button></div>
+    ${stalled ? `<p class="download-warning">Nothing has moved${
+      active.length ? ` for ${sinceLabel(active[0].changed)}` : waiting.length ? ' — files are waiting with none running' : ''
+      }. Mylar hands the queue to one worker at a time, and a restart of Mylar leaves it holding a file it will never finish. Restarting the queue hands every waiting file back to it.</p>` : ''}
+    <div class="download-list">${[...active, ...failed, ...waiting].map(row).join('')
+      || '<div class="empty">Nothing in Mylar’s download queue.</div>'}</div>`;
+}
+
+// Refreshes itself only while there is something to watch, and stops the
+// moment the section leaves the page.
+async function downloadsPanel(slot) {
+  for (;;) {
+    if (!slot.isConnected) return;
+    let data;
+    try { data = await api('/api/downloads'); } catch {
+      // Mylar's web UI is a separate port from its API; if only that is down,
+      // the requests below it are still worth showing.
+      slot.innerHTML = '';
+      return;
+    }
+    if (!slot.isConnected) return;
+    slot.innerHTML = downloadsHtml(data);
+    if (!data.counts.downloading && !data.counts.waiting) return;
+    await new Promise((resolve) => { setTimeout(resolve, DOWNLOAD_POLL_MS); });
+  }
+}
+
+async function restartDownloads(id, button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Restarting…';
+  try {
+    const { message } = await api('/api/downloads/retry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(id ? { id } : {}),
+    });
+    toast(message || 'Mylar restarted the queue.');
+    const slot = document.querySelector('#downloads');
+    // Mylar picks the queue up a moment after answering; re-read rather than
+    // leaving the row that was just restarted still reading "waiting".
+    if (slot) setTimeout(() => downloadsPanel(slot), 2500);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 routes.library = async () => {
   view.innerHTML = `<section class="lede" style="border:0"><span class="kicker" style="color:var(--accent)">Your shelf</span>
     <h1>What you asked for,<br />and what <em>arrived</em>.</h1></section>${skeletons(1, '1fr')}`;
@@ -1271,8 +1374,11 @@ routes.library = async () => {
       <div><span class="kicker">In library ${info('in library')}</span><b class="disp" style="color:var(--shelf)">${counts.inLibrary}</b></div>
       <div><span class="kicker">Still searching ${info('searching')}</span><b class="disp" style="color:var(--accent)">${counts.searching}</b></div>
     </div>
+    ${/* Filled after paint: the queue lives behind Mylar's web UI, and the
+          requests below must never wait on it. */ ''}
+    <section id="downloads" class="download-panel"></section>
     ${activity.items.length ? `<section class="request-activity">
-      <div class="section-head"><span class="kicker no">01</span><h2>Requests</h2>
+      <div class="section-head"><span class="kicker no">02</span><h2>Requests</h2>
         <span class="kicker aside">${activity.counts.snatched} snatched · ${activity.counts.wanted} queued · ${activity.counts.failed} need attention</span>
         <button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>
       <p class="request-explainer">Panel queues only the parts you selected. Mylar searches your indexers; <em>Snatched</em> means it reached the download client, and Komga marks it readable after import.</p>
@@ -1300,7 +1406,7 @@ routes.library = async () => {
         ${group.parts.length > REQUEST_PARTS_SHOWN ? `<button class="request-unfurl kicker" data-unfurl="${esc(group.comicId)}">
           Show all ${group.parts.length} parts ↓</button>` : ''}
       </article>`).join('')}</div>
-    </section>` : `<section class="request-activity"><div class="section-head"><span class="kicker no">01</span><h2>Requests</h2></div><div class="empty">Choose a specific issue or volume and it will appear here with Mylar’s progress.</div></section>`}
+    </section>` : `<section class="request-activity"><div class="section-head"><span class="kicker no">02</span><h2>Requests</h2></div><div class="empty">Choose a specific issue or volume and it will appear here with Mylar’s progress.</div></section>`}
     ${komga ? '' : '<p class="kicker" style="color:var(--accent);padding-bottom:14px">Komga is not connected — every title will read as searching.</p>'}
     <div class="index">${items.map((item, i) => `
       <div class="row">
@@ -1316,6 +1422,8 @@ routes.library = async () => {
 
   // After paint, never before it.
   if (groups.length) hydrateRequestParts(groups.map((group) => group.comicId));
+  const queue = document.querySelector('#downloads');
+  if (queue) downloadsPanel(queue);
 };
 
 /* ---------------- settings ---------------- */
@@ -1753,6 +1861,10 @@ document.addEventListener('click', async (event) => {
       : `Show all ${slot.querySelectorAll('.request-part').length} parts ↓`;
     return;
   }
+  const restartQueue = event.target.closest('[data-restart-queue]');
+  if (restartQueue && !restartQueue.disabled) return restartDownloads('', restartQueue);
+  const retryDownload = event.target.closest('[data-retry-download]');
+  if (retryDownload && !retryDownload.disabled) return restartDownloads(retryDownload.dataset.retryDownload, retryDownload);
   const retry = event.target.closest('[data-retry-part]');
   if (retry && !retry.disabled) {
     const [comicId, issueId] = retry.dataset.retryPart.split('/');
