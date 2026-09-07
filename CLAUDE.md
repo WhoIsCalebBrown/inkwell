@@ -240,6 +240,11 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
   *because* it is a name match" rather than "this looks random" — which is the
   only useful bug report about a data source, and the reason the workings are
   published rather than implied.
+- **A `<select>` needs `appearance: none`.** iOS Safari otherwise draws its own
+  rounded pill with its own padding inside our box, and the value is clipped —
+  "Comics & manga" did not fit its field on an iPad while looking fine in
+  Chromium. Dropping the native appearance means supplying the arrow ourselves
+  (an inline SVG background) and leaving `padding-right` clear of it.
 - **Never put an ⓘ inside a `<label>` that wraps its control.** A tap on the
   icon activates the control it is explaining: the format and kind dropdowns
   opened at the same time as their own tooltip, and neither could be used.

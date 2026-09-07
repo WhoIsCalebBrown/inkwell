@@ -365,15 +365,28 @@ a.secondary { display: inline-block; text-decoration: none; }
 .lore-group .chip { padding: 7px 9px; text-transform: none; letter-spacing: .08em; font-size: 9.5px; }
 
 /* ---------- filters ---------- */
-.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 24px;
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(172px, 1fr)); gap: 24px;
   border-top: 1.5px solid var(--rule-strong); border-bottom: 1px solid var(--rule); padding: 16px 0; }
 /* Direct children only: a .filter-field now carries its own <label> inside the
    kicker line, and that one must stay inline beside the ⓘ. */
 .filters > label, .filters > .filter-field { display: grid; gap: 8px; }
 .filter-field .kicker { display: flex; align-items: center; gap: 6px; }
 .filter-field .kicker label { cursor: pointer; }
-.filters select { width: 100%; border: 0; border-bottom: 1px solid var(--rule); background: none;
-  color: var(--text); font-family: var(--disp); font-size: 19px; padding: 2px 0 6px; outline: none; }
+/* iOS Safari draws a select as its own rounded pill with padding of its own,
+   inside our box: "Comics & manga" then sat wider than the space left for it
+   and was cut off. Dropping the native appearance everywhere makes the control
+   ours on every device -- which means supplying the arrow too, and keeping the
+   text clear of it. */
+.filters select {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; min-width: 0; border: 0; border-bottom: 1px solid var(--rule);
+  color: var(--text); font-family: var(--disp); font-size: 19px;
+  padding: 2px 26px 6px 0; outline: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7' fill='none' stroke='%23a8a08f' stroke-width='1.4'%3E%3Cpath d='M1 1l4.5 4.5L10 1'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 4px center;
+}
 .filters select:focus { border-color: var(--accent); }
 .filters option { background: var(--surface); color: var(--text); font-family: var(--ui); font-size: 14px; }
 
