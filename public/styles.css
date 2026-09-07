@@ -157,13 +157,39 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   letter-spacing: 0.03em; padding: 15px 26px; display: inline-flex; align-items: center; gap: 10px; }
 .primary[disabled] { background: var(--surface-2); color: var(--muted); cursor: default; }
 
-.house-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
-.house-tile { display: grid; gap: 10px; justify-items: start; border: 1px solid var(--rule);
-  padding: 18px; text-align: left; }
-.house-tile:hover { border-color: var(--accent); }
-.house-logo { display: grid; place-items: center; width: 54px; height: 54px; background: #f4efe2; padding: 6px; color: #14120d; }
+/* ---------- browse: formats drawn to scale ---------- */
+.format-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); }
+.format-card, .kind-card, .house-tile {
+  display: grid; gap: 12px; justify-items: start; text-align: left;
+  border: 1px solid var(--rule); background: var(--surface); padding: 20px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.format-card:hover, .kind-card:hover, .house-tile:hover {
+  border-color: var(--accent); transform: translateY(-2px);
+}
+.format-name { font-size: 24px; line-height: 1.05; }
+.format-blurb { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+
+/* A shelf of books seen end-on: the wide block is this format, the faded ones
+   behind it are ordinary trades for scale. */
+.shelf-row { display: flex; align-items: flex-end; gap: 4px; height: 78px; }
+.book { display: block; height: 78px; background: var(--accent);
+  box-shadow: inset -2px 0 0 rgba(0, 0, 0, 0.28), inset 2px 0 0 rgba(255, 255, 255, 0.14); }
+.book.ghost { width: 9px; height: 64px; background: var(--surface-2);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35); }
+
+/* ---------- browse: reading direction ---------- */
+.kind-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.pages { display: flex; align-items: center; gap: 5px; height: 78px; color: var(--accent); }
+.pages.rtl { flex-direction: row-reverse; }
+.page { width: 42px; height: 70px; border: 1px solid var(--rule);
+  background: linear-gradient(var(--surface-2), var(--surface)); }
+.pages .arrow { display: grid; place-items: center; padding: 0 4px; }
+
+.house-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); }
+.house-logo { display: grid; place-items: center; width: 72px; height: 72px; background: #f4efe2; padding: 9px; color: #14120d; }
 .house-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.house-name { font-size: 21px; line-height: 1.1; }
+.house-name { font-size: 25px; line-height: 1.06; }
 
 .pub-head { display: grid; grid-template-columns: 120px 1fr; gap: 30px; align-items: start;
   padding: 34px 0 30px; border-bottom: 1px solid var(--rule); }
@@ -174,13 +200,39 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .pub-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .credits { margin-top: 20px; display: grid; gap: 9px; }
 
-@media (max-width: 720px) { .house-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
-.house-tile { display: grid; gap: 10px; justify-items: start; border: 1px solid var(--rule);
-  padding: 18px; text-align: left; }
-.house-tile:hover { border-color: var(--accent); }
-.house-logo { display: grid; place-items: center; width: 54px; height: 54px; background: #f4efe2; padding: 6px; color: #14120d; }
+@media (max-width: 720px) { /* ---------- browse: formats drawn to scale ---------- */
+.format-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); }
+.format-card, .kind-card, .house-tile {
+  display: grid; gap: 12px; justify-items: start; text-align: left;
+  border: 1px solid var(--rule); background: var(--surface); padding: 20px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.format-card:hover, .kind-card:hover, .house-tile:hover {
+  border-color: var(--accent); transform: translateY(-2px);
+}
+.format-name { font-size: 24px; line-height: 1.05; }
+.format-blurb { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+
+/* A shelf of books seen end-on: the wide block is this format, the faded ones
+   behind it are ordinary trades for scale. */
+.shelf-row { display: flex; align-items: flex-end; gap: 4px; height: 78px; }
+.book { display: block; height: 78px; background: var(--accent);
+  box-shadow: inset -2px 0 0 rgba(0, 0, 0, 0.28), inset 2px 0 0 rgba(255, 255, 255, 0.14); }
+.book.ghost { width: 9px; height: 64px; background: var(--surface-2);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35); }
+
+/* ---------- browse: reading direction ---------- */
+.kind-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.pages { display: flex; align-items: center; gap: 5px; height: 78px; color: var(--accent); }
+.pages.rtl { flex-direction: row-reverse; }
+.page { width: 42px; height: 70px; border: 1px solid var(--rule);
+  background: linear-gradient(var(--surface-2), var(--surface)); }
+.pages .arrow { display: grid; place-items: center; padding: 0 4px; }
+
+.house-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); }
+.house-logo { display: grid; place-items: center; width: 72px; height: 72px; background: #f4efe2; padding: 9px; color: #14120d; }
 .house-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.house-name { font-size: 21px; line-height: 1.1; }
+.house-name { font-size: 25px; line-height: 1.06; }
 
 .pub-head { grid-template-columns: 84px 1fr; gap: 18px; } }
 

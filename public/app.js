@@ -188,31 +188,71 @@ routes.discover = async () => {
 
 /* ---------------- browse ---------------- */
 
+// Formats drawn to scale. The spine width is the actual differentiator between
+// these things -- an omnibus is a brick, a trade paperback is not -- so the card
+// shows it rather than describing it. Copy is plain English on purpose: the
+// jargon is the main barrier to buying collected editions.
+const FORMATS = [
+  { name: 'Omnibus',           spine: 46, blurb: 'A brick. One oversized hardcover swallowing a whole run, often 700+ pages.' },
+  { name: 'Compendium',        spine: 42, blurb: 'Phone-book thick and cheap. Huge page count, softcover, small print.' },
+  { name: 'Library edition',   spine: 32, blurb: 'Oversized hardcover, complete runs, made to sit on a shelf for years.' },
+  { name: 'Absolute',          spine: 34, blurb: 'DC at its most lavish: slipcased, oversized, remastered art.' },
+  { name: 'Epic Collection',   spine: 22, blurb: 'Marvel in order, in paperback. The cheapest way to read a long run.' },
+  { name: 'Masterworks',       spine: 20, blurb: 'Marvel’s archival hardcovers. Early issues, restored colour.' },
+  { name: 'Deluxe edition',    spine: 18, blurb: 'Hardcover, bigger trim, sketches and scripts in the back.' },
+  { name: 'Hardcover',         spine: 14, blurb: 'A bound collection at normal size. A few issues, not a run.' },
+  { name: 'Collected edition', spine: 9,  blurb: 'The everyday trade paperback: one story arc, one book.' },
+];
+
 routes.browse = async () => {
   // Browse is a choice of axis, not a publisher list: publisher is only one of
   // the ways in, and leading with it hid formats and kinds entirely.
-  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:30px">
+  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:26px">
       <span class="kicker" style="color:var(--accent)">Browse</span>
       <h1>Find it the way<br />you already <em>think</em> about it.</h1>
-      <p>By the house that published it, the shape of the book, or who made it.</p>
+      <p>By the shape of the book, where it comes from, or the house that made it.</p>
     </section>
 
     <div class="section-head"><span class="kicker no">01</span><h2>By format</h2>
-      <span class="kicker aside">The shape of the book</span></div>
-    <div class="chips">${
-      ['Omnibus', 'Compendium', 'Absolute', 'Epic Collection', 'Masterworks',
-       'Deluxe edition', 'Library edition', 'Hardcover', 'Collected edition']
-        .map((f) => `<button class="chip kicker" data-format="${esc(f)}">${esc(f)}</button>`).join('')}</div>
+      <span class="kicker aside">Spine width to scale, against a standard paperback</span></div>
+    <div class="format-grid">${FORMATS.map((f) => `
+      <button class="format-card" data-format="${esc(f.name)}">
+        <span class="shelf-row">
+          <span class="book" style="width:${f.spine}px"></span>
+          ${/* The reference books are a FIXED standard trade paperback. Scaling
+                them with the subject, as they were, destroyed the comparison:
+                every card looked identical. */ ''}
+          <span class="book ghost"></span>
+          <span class="book ghost"></span>
+        </span>
+        <span class="disp format-name">${esc(f.name)}</span>
+        <span class="format-blurb">${esc(f.blurb)}</span>
+      </button>`).join('')}</div>
 
-    <div class="section-head"><span class="kicker no">02</span><h2>By kind</h2></div>
-    <div class="chips">
-      <button class="chip kicker" data-kind="comic">Comics</button>
-      <button class="chip kicker" data-kind="manga">Manga</button>
+    <div class="section-head"><span class="kicker no">02</span><h2>By kind</h2>
+      <span class="kicker aside">Which way the pages turn</span></div>
+    <div class="kind-grid">
+      <button class="kind-card" data-kind="comic">
+        <span class="pages">
+          <span class="page"></span><span class="page"></span>
+          <span class="arrow">${arrowSvg(false)}</span>
+        </span>
+        <span class="disp format-name">Comics</span>
+        <span class="format-blurb">Western publishers. Left to right, colour, single issues collected later.</span>
+      </button>
+      <button class="kind-card" data-kind="manga">
+        <span class="pages rtl">
+          <span class="page"></span><span class="page"></span>
+          <span class="arrow">${arrowSvg(true)}</span>
+        </span>
+        <span class="disp format-name">Manga</span>
+        <span class="format-blurb">Japanese publishers. Right to left, usually black and white, sold in volumes.</span>
+      </button>
     </div>
 
     <div class="section-head"><span class="kicker no">03</span><h2>By publisher</h2>
       <span class="kicker aside">Characters, imprints and the full catalogue</span></div>
-    <div id="houses">${skeletons(5, 'repeat(auto-fill,minmax(160px,1fr))')}</div>`;
+    <div id="houses">${skeletons(5, 'repeat(auto-fill,minmax(200px,1fr))')}</div>`;
 
   const { items } = await api('/api/publishers');
   document.querySelector('#houses').innerHTML = `<div class="house-grid">${
@@ -220,11 +260,18 @@ routes.browse = async () => {
       <button class="house-tile" data-publisher="${esc(house.name)}">
         <span class="house-logo">${house.logo
           ? `<img src="${esc(house.logo)}" alt="" loading="lazy" />`
-          : `<span class="disp" style="font-size:22px">${esc(house.name.slice(0, 2))}</span>`}</span>
+          : `<span class="disp" style="font-size:26px">${esc(house.name.slice(0, 2))}</span>`}</span>
         <span class="disp house-name">${esc(house.name)}</span>
-        <span class="kicker">${house.lines.length} imprints</span>
+        ${house.deck ? `<span class="format-blurb">${esc(house.deck.slice(0, 90))}…</span>` : ''}
+        <span class="kicker">${house.lines.length} imprints &middot; browse →</span>
       </button>`).join('')}</div>`;
 };
+
+function arrowSvg(rtl) {
+  return `<svg width="26" height="14" viewBox="0 0 26 14" fill="none" stroke="currentColor"
+    stroke-width="1.6"${rtl ? ' style="transform:scaleX(-1)"' : ''}>
+    <path d="M1 7h20M16 2l5 5-5 5"></path></svg>`;
+}
 
 routes.publisher = async (encoded, pageArg) => {
   const name = decodeURIComponent(encoded || '');
