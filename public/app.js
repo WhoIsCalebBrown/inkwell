@@ -238,77 +238,51 @@ const FORMATS = [
 ];
 
 routes.browse = async () => {
-  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:26px">
+  // Browse offers destinations, not filters. "By kind" used to live here and was
+  // removed: Comics/Manga is a filter present on every search, and as a card it
+  // was two grey rectangles and an arrow.
+  view.innerHTML = `<section class="lede browse-lede">
       <span class="kicker" style="color:var(--accent)">Browse</span>
-      <h1>Find it the way<br />you already <em>think</em> about it.</h1>
-      <p>Start with a publisher, or come at it by the shape of the book.
-         Anything underlined explains itself &mdash; hover it.</p>
+      <h1>Start with a house,<br />or with the <em>shape</em> of the book.</h1>
+      <p>Anything underlined explains itself &mdash; hover it.</p>
     </section>
 
-    <div class="section-head"><span class="kicker no">01</span><h2>By publisher</h2>
+    <div class="section-head"><span class="kicker no">01</span><h2>Publishers</h2>
       <span class="kicker aside">Characters, ${term('imprints', 'imprint')} and the full catalogue</span></div>
-    <div id="houses">${skeletons(5, 'repeat(auto-fill,minmax(216px,1fr))')}</div>
+    <div id="houses" class="house-grid">${
+      '<div class="house-tile skeleton-tile"></div>'.repeat(5)}</div>
 
-    <div class="section-head"><span class="kicker no">02</span><h2>By format</h2>
-      <span class="kicker aside">Spine width to scale, against a standard paperback</span></div>
-    <div id="formats">${skeletons(6, 'repeat(auto-fill,minmax(236px,1fr))')}</div>
-
-    <div class="section-head"><span class="kicker no">03</span><h2>By kind</h2>
-      <span class="kicker aside">Which way the pages turn</span></div>
-    <div class="kind-grid">
-      <button class="kind-card" data-kind="comic">
-        <span class="pages">
-          <span class="page"></span><span class="page"></span>
-          <span class="arrow">${arrowSvg(false)}</span>
-        </span>
-        <span class="disp format-name">Comics</span>
-        <span class="format-blurb">Western publishers. Left to right, colour, single issues collected later.</span>
-      </button>
-      <button class="kind-card" data-kind="manga">
-        <span class="pages rtl">
-          <span class="page"></span><span class="page"></span>
-          <span class="arrow">${arrowSvg(true)}</span>
-        </span>
-        <span class="disp format-name">${term('Manga', 'manga')}</span>
-        <span class="format-blurb">Japanese publishers. Right to left, usually black and white, sold in volumes.</span>
-      </button>
-    </div>`;
+    <div class="section-head"><span class="kicker no">02</span><h2>Formats</h2>
+      <span class="kicker aside">Thickness to scale</span></div>
+    <div id="formats" class="format-grid">${
+      '<div class="format-card skeleton-tile"></div>'.repeat(9)}</div>`;
 
   api('/api/publishers').then(({ items }) => {
-    document.querySelector('#houses').innerHTML = `<div class="house-grid">${
-      items.map((house) => `
-        <button class="house-tile" data-publisher="${esc(house.name)}">
-          <span class="house-logo">${house.logo
-            ? `<img src="${esc(house.logo)}" alt="" loading="lazy" />`
-            : `<span class="disp" style="font-size:26px">${esc(house.name.slice(0, 2))}</span>`}</span>
-          <span class="disp house-name">${esc(house.name)}</span>
-          ${house.deck ? `<span class="format-blurb">${esc(house.deck.slice(0, 90))}…</span>` : ''}
-          <span class="kicker">${house.lines.length} imprints &middot; browse →</span>
-        </button>`).join('')}</div>`;
-  }).catch(() => {});
+    document.querySelector('#houses').innerHTML = items.map((house) => `
+      <button class="house-tile" data-publisher="${esc(house.name)}">
+        <span class="house-logo">${house.logo
+          ? `<img src="${esc(house.logo)}" alt="" loading="lazy" />`
+          : `<span class="disp" style="font-size:26px">${esc(house.name.slice(0, 2))}</span>`}</span>
+        <span class="disp house-name">${esc(house.name)}</span>
+        <span class="kicker">${house.lines.length} imprints</span>
+      </button>`).join('');
+  }).catch(() => { document.querySelector('#houses').innerHTML = ''; });
 
   api('/api/formats').then(({ items }) => {
-    document.querySelector('#formats').innerHTML = `<div class="format-grid">${
-      items.map((f) => `
-        <button class="format-card" data-format="${esc(f.name)}">
-          <span class="format-top">
-            ${f.cover ? `<img class="format-cover" src="${esc(f.cover)}" alt="" loading="lazy" />` : ''}
-            <span class="shelf-row">
-              <span class="book" style="width:${f.spine}px"></span>
-              <span class="book ghost"></span><span class="book ghost"></span>
-            </span>
-          </span>
-          <span class="disp format-name">${term(f.name)}</span>
-          <span class="format-blurb">${esc(f.blurb)}</span>
-        </button>`).join('')}</div>`;
-  }).catch(() => {});
+    document.querySelector('#formats').innerHTML = items.map((f) => `
+      <button class="format-card" data-format="${esc(f.name)}">
+        <span class="format-book">
+          ${/* The spine is attached to the cover so it reads as one book seen at
+                an angle, rather than a second competing diagram. */ ''}
+          <span class="spine" style="width:${Math.round(f.spine * 0.42)}px"></span>
+          ${f.cover ? `<img class="format-cover" src="${esc(f.cover)}" alt="" loading="lazy" />`
+                    : '<span class="format-cover"></span>'}
+        </span>
+        <span class="disp format-name">${term(f.name)}</span>
+        <span class="format-blurb">${esc(f.blurb)}</span>
+      </button>`).join('');
+  }).catch(() => { document.querySelector('#formats').innerHTML = ''; });
 };
-
-function arrowSvg(rtl) {
-  return `<svg width="26" height="14" viewBox="0 0 26 14" fill="none" stroke="currentColor"
-    stroke-width="1.6"${rtl ? ' style="transform:scaleX(-1)"' : ''}>
-    <path d="M1 7h20M16 2l5 5-5 5"></path></svg>`;
-}
 
 routes.publisher = async (encoded, pageArg) => {
   const name = decodeURIComponent(encoded || '');
@@ -718,11 +692,6 @@ document.addEventListener('click', (event) => {
   if (fmt) {
     state.pendingFilters = { format: fmt.dataset.format };
     return go(`/search/${encodeURIComponent(fmt.dataset.format.toLowerCase())}`);
-  }
-  const kind = event.target.closest('[data-kind]');
-  if (kind) {
-    state.pendingFilters = { medium: kind.dataset.kind };
-    return go(`/search/${encodeURIComponent(kind.dataset.kind === 'manga' ? 'manga' : 'comics')}`);
   }
   const pageBtn = event.target.closest('[data-page]');
   if (pageBtn && state.publisher) {

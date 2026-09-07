@@ -432,13 +432,13 @@ const PUBLISHER_SEEDS = {
 // only what the API confirms belongs to the house.
 async function publisherThreads(name, resource, seeds) {
   return cached(`publisher:${normalise(name)}:${resource}`, 7 * 24 * 60 * 60_000, async () => {
-    const pages = await Promise.all(seeds.map((seed) =>
+    const rows = await gatherOrFail(seeds.map((seed) =>
       comicVine('search', {
         query: seed, resources: resource, limit: '30',
         field_list: 'id,name,deck,image,publisher,count_of_issue_appearances',
-      }).catch(() => [])));
+      })), `${name} ${resource}s`);
     const seen = new Set();
-    return pages.flat()
+    return rows
       .filter((x) => x && x.name && x.image?.medium_url)
       .filter((x) => String(x.publisher?.name || '').startsWith(name.split(' ')[0]))
       .filter((x) => {
@@ -657,17 +657,33 @@ const FORMAT_QUERIES = {
   'One-shot': ['one-shot', 'special', 'giant-size'],
 };
 
+// Swallowing per-request failures and returning [] means a rate-limited fetch
+// is indistinguishable from "no results" -- and then gets cached as emptiness
+// for a day. Anything that fans out must fail when EVERYTHING failed.
+async function gatherOrFail(tasks, what) {
+  const settled = await Promise.allSettled(tasks);
+  const ok = settled.filter((r) => r.status === 'fulfilled');
+  // Failing only when EVERYTHING failed is not enough: if most requests are
+  // rate-limited, the survivors produce a thin result that then gets cached for
+  // days as though it were the real answer. Half is the line.
+  if (ok.length * 2 <= settled.length) {
+    throw new Error(settled.find((r) => r.status === 'rejected')?.reason?.message
+      || `Could not reach ComicVine for ${what}.`);
+  }
+  return ok.flatMap((r) => r.value ?? []);
+}
+
 async function searchVolumes(q, edition = '') {
   // ComicVine buries collected editions: query=spider-man returns exactly one
   // omnibus on page one. Asking for the format by name is the only way to
   // surface them, so a format filter becomes part of the query rather than a
   // filter applied to whatever the generic search happened to return.
   const queries = [q, ...(FORMAT_QUERIES[edition] ?? []).map((term) => `${q} ${term}`)];
-  const pages = await Promise.all(queries.flatMap((query) =>
-    Array.from({ length: SEARCH_PAGES }, (_, i) =>
-      comicVine('search', { query, resources: 'volume', limit: '100', page: String(i + 1) })
-        .catch(() => []))));
-  return pages.flat();
+  return gatherOrFail(
+    queries.flatMap((query) =>
+      Array.from({ length: SEARCH_PAGES }, (_, i) =>
+        comicVine('search', { query, resources: 'volume', limit: '100', page: String(i + 1) }))),
+    `search "${q}"`);
 }
 
 app.get('/api/search', async (req, res, next) => {
@@ -785,12 +801,13 @@ async function railRows(rail) {
   // Keep the query that found each row: for rails that are not about the big
   // two, relevance to that query orders far better than publisher standing --
   // weighting alone put Batman at the top of the manga rail.
-  const results = await Promise.all(rail.queries.flatMap((query) => [1, 2].map(async (page) => {
-    const rows = await comicVine('search', { query, resources: 'volume', limit: '100', page: String(page) })
-      .catch(() => []);
-    return rows.map((item) => ({ item, query }));
-  })));
-  return curateRail(rail, results.flat());
+  const results = await gatherOrFail(
+    rail.queries.flatMap((query) => [1, 2].map(async () => {
+      const rows = await comicVine('search', { query, resources: 'volume', limit: '100' });
+      return rows.map((item) => ({ item, query }));
+    })),
+    `the ${rail.title} rail`);
+  return curateRail(rail, results);
 }
 
 app.get('/api/discover', async (_req, res, next) => {

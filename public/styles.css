@@ -67,6 +67,8 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 .section-head h2 { font-family: var(--disp); font-size: clamp(24px, 3.4vw, 34px); font-weight: 400; margin: 0; letter-spacing: -0.015em; }
 .section-head .aside { margin-left: auto; }
 
+.browse-lede { padding: 34px 0 26px !important; }
+.browse-lede h1 { font-size: clamp(34px, 5vw, 58px) !important; }
 .lede { padding: 52px 0 44px; border-bottom: 1px solid var(--rule); display: grid; gap: 22px; }
 .lede h1 { font-family: var(--disp); font-size: clamp(44px, 8vw, 92px); font-weight: 400; line-height: 0.88; letter-spacing: -0.03em; margin: 0; }
 .lede h1 em { font-style: italic; }
@@ -179,38 +181,39 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 }
 
 /* ---------- browse: formats drawn to scale ---------- */
-.format-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); }
-.format-card, .kind-card, .house-tile {
-  display: grid; gap: 12px; justify-items: start; text-align: left;
-  border: 1px solid var(--rule); background: var(--surface); padding: 20px;
+/* Fixed columns rather than auto-fill: nine formats and five publishers were
+   wrapping into orphan rows with large dead gaps. 3x3 and 5x1 divide exactly. */
+.format-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .format-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .format-grid { grid-template-columns: 1fr; } }
+
+/* One book seen at an angle: cover plus its own spine. */
+.format-book { display: flex; align-items: stretch; height: 96px; }
+.format-book .spine { display: block; background: var(--accent); flex: none;
+  box-shadow: inset -2px 0 4px rgba(0, 0, 0, 0.4); }
+.format-cover { display: block; width: 64px; height: 96px; object-fit: cover;
+  background: var(--surface-2); box-shadow: 4px 6px 16px rgba(0, 0, 0, 0.5); }
+.format-card, .house-tile {
+  display: grid; gap: 11px; justify-items: start; text-align: left;
+  border: 1px solid var(--rule); background: var(--surface); padding: 17px;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.format-card:hover, .kind-card:hover, .house-tile:hover {
-  border-color: var(--accent); transform: translateY(-2px);
-}
+.format-card:hover, .house-tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+.skeleton-tile { min-height: 168px; background: linear-gradient(90deg, var(--surface) 25%,
+  var(--surface-2) 37%, var(--surface) 63%); background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite; }
 .format-name { font-size: 24px; line-height: 1.05; }
 .format-blurb { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 
 /* A shelf of books seen end-on: the wide block is this format, the faded ones
    behind it are ordinary trades for scale. */
-.format-top { display: flex; align-items: flex-end; gap: 14px; }
 .format-cover { width: 68px; aspect-ratio: 2 / 3; object-fit: cover; flex: none;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
-.shelf-row { display: flex; align-items: flex-end; gap: 4px; height: 78px; }
-.book { display: block; height: 78px; background: var(--accent);
-  box-shadow: inset -2px 0 0 rgba(0, 0, 0, 0.28), inset 2px 0 0 rgba(255, 255, 255, 0.14); }
-.book.ghost { width: 9px; height: 64px; background: var(--surface-2);
-  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35); }
 
-/* ---------- browse: reading direction ---------- */
-.kind-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-.pages { display: flex; align-items: center; gap: 5px; height: 78px; color: var(--accent); }
-.pages.rtl { flex-direction: row-reverse; }
-.page { width: 42px; height: 70px; border: 1px solid var(--rule);
-  background: linear-gradient(var(--surface-2), var(--surface)); }
-.pages .arrow { display: grid; place-items: center; padding: 0 4px; }
 
-.house-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); }
+.house-grid { display: grid; gap: 14px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1000px) { .house-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .house-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .house-logo { display: grid; place-items: center; width: 72px; height: 72px; background: #f4efe2;
   padding: 9px; color: #14120d; overflow: hidden; }
 .house-logo img { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -244,38 +247,39 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 }
 
 /* ---------- browse: formats drawn to scale ---------- */
-.format-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); }
-.format-card, .kind-card, .house-tile {
-  display: grid; gap: 12px; justify-items: start; text-align: left;
-  border: 1px solid var(--rule); background: var(--surface); padding: 20px;
+/* Fixed columns rather than auto-fill: nine formats and five publishers were
+   wrapping into orphan rows with large dead gaps. 3x3 and 5x1 divide exactly. */
+.format-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .format-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .format-grid { grid-template-columns: 1fr; } }
+
+/* One book seen at an angle: cover plus its own spine. */
+.format-book { display: flex; align-items: stretch; height: 96px; }
+.format-book .spine { display: block; background: var(--accent); flex: none;
+  box-shadow: inset -2px 0 4px rgba(0, 0, 0, 0.4); }
+.format-cover { display: block; width: 64px; height: 96px; object-fit: cover;
+  background: var(--surface-2); box-shadow: 4px 6px 16px rgba(0, 0, 0, 0.5); }
+.format-card, .house-tile {
+  display: grid; gap: 11px; justify-items: start; text-align: left;
+  border: 1px solid var(--rule); background: var(--surface); padding: 17px;
   transition: border-color 0.15s ease, transform 0.15s ease;
 }
-.format-card:hover, .kind-card:hover, .house-tile:hover {
-  border-color: var(--accent); transform: translateY(-2px);
-}
+.format-card:hover, .house-tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+.skeleton-tile { min-height: 168px; background: linear-gradient(90deg, var(--surface) 25%,
+  var(--surface-2) 37%, var(--surface) 63%); background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite; }
 .format-name { font-size: 24px; line-height: 1.05; }
 .format-blurb { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 
 /* A shelf of books seen end-on: the wide block is this format, the faded ones
    behind it are ordinary trades for scale. */
-.format-top { display: flex; align-items: flex-end; gap: 14px; }
 .format-cover { width: 68px; aspect-ratio: 2 / 3; object-fit: cover; flex: none;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); }
-.shelf-row { display: flex; align-items: flex-end; gap: 4px; height: 78px; }
-.book { display: block; height: 78px; background: var(--accent);
-  box-shadow: inset -2px 0 0 rgba(0, 0, 0, 0.28), inset 2px 0 0 rgba(255, 255, 255, 0.14); }
-.book.ghost { width: 9px; height: 64px; background: var(--surface-2);
-  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.35); }
 
-/* ---------- browse: reading direction ---------- */
-.kind-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-.pages { display: flex; align-items: center; gap: 5px; height: 78px; color: var(--accent); }
-.pages.rtl { flex-direction: row-reverse; }
-.page { width: 42px; height: 70px; border: 1px solid var(--rule);
-  background: linear-gradient(var(--surface-2), var(--surface)); }
-.pages .arrow { display: grid; place-items: center; padding: 0 4px; }
 
-.house-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); }
+.house-grid { display: grid; gap: 14px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1000px) { .house-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .house-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .house-logo { display: grid; place-items: center; width: 72px; height: 72px; background: #f4efe2;
   padding: 9px; color: #14120d; overflow: hidden; }
 .house-logo img { display: block; width: 100%; height: 100%; object-fit: contain; }
