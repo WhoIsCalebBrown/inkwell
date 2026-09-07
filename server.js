@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cached, eager, read as cacheRead } from './store.js';
 import * as metron from './metron.js';
+import { supplement } from './enrich.js';
 
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -481,6 +482,19 @@ app.get('/api/discover', async (_req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Supplement providers, consulted only on detail views. Each returns a partial
+// record in this app's own shape, or null. Metron is absent until its payloads
+// have actually been observed -- its field names are not documented well enough
+// to map from the docs alone, and guessing is how the Marvel provider went in
+// and straight back out.
+async function supplementsFor(item) {
+  const providers = [];
+  const settled = await Promise.allSettled(providers.map((p) => p(item)));
+  return settled
+    .filter((r) => r.status === 'fulfilled' && r.value)
+    .map((r) => r.value);
+}
+
 app.get('/api/volume/:id', async (req, res, next) => {
   const { id } = req.params;
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'A numeric ComicVine volume id is required.' });
@@ -490,7 +504,9 @@ app.get('/api/volume/:id', async (req, res, next) => {
         comicVine(`volume/4050-${id}`, { field_list: VOLUME_FIELDS })),
       watchlist(),
     ]);
-    res.json(catalogueShape(data, new Set(watched.map((x) => x.id))));
+    const shaped = catalogueShape(data, new Set(watched.map((x) => x.id)));
+    // ComicVine stays authoritative for identity; a supplement only fills gaps.
+    res.json(supplement(shaped, await supplementsFor(shaped)));
   } catch (error) { next(error); }
 });
 
