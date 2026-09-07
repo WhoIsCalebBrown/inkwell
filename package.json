@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "verify:cache": "node tools/verify-cache.mjs",
+    "verify:http": "node tools/verify-http.mjs",
     "capture:metron": "node tools/capture-metron.mjs"
   },
   "dependencies": {
