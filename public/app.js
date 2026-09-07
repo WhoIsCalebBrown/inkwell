@@ -34,6 +34,30 @@ const GLOSSARY = {
   manga: 'Comics from Japanese publishers, read right to left and usually collected in numbered volumes.',
   opds: 'An open catalogue standard that comic readers use to browse a server’s library.',
   notability: 'Our own ranking, not a rating: how established the publisher is, plus how substantial the book is. ComicVine has no ratings at all.',
+  'best match': 'Closest title match first. Ties are broken by notability, because a character search returns dozens of volumes with identical names.',
+  'in library': 'Downloaded and imported into Komga. You can read it now.',
+  searching: 'Requested in Mylar, which is still hunting for it across GetComics and your Prowlarr indexers. This can take a while.',
+  'on shelf': 'Already requested — it is on your Mylar watchlist, whether or not it has downloaded yet.',
+  series: 'An ongoing run of single issues, as opposed to a collected book.',
+  character: 'A person in the comics. Following one shows every book they appear in.',
+  creator: 'A writer or artist. The way into manga and creator-owned books, where nobody follows a single character.',
+  team: 'A group read as one thing — the Avengers, the X-Men, the Justice League.',
+  event: 'A crossover storyline running through several titles at once, like Secret Wars or Dark Web.',
+  'issue range': 'Which issues this particular run covers. The only reliable way to tell six volumes all called "The Amazing Spider-Man" apart.',
+  komga: 'Your comic library server. Once a request downloads, it is imported here and becomes readable.',
+  mylar: 'The downloader. Requesting a book hands it to Mylar, which searches your indexers in the background.',
+};
+
+// An explicit affordance rather than a dotted underline: a small ⓘ that says
+// there is something to read here. Placed anywhere a term might not be obvious.
+const info = (key, align = '') => {
+  const tip = GLOSSARY[String(key).toLowerCase()];
+  if (!tip) return '';
+  return `<button type="button" class="info ${align}" data-tip="${esc(tip)}"
+    aria-label="What does ${esc(key)} mean?">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9.5"></circle><path d="M12 11v6"></path><circle cx="12" cy="7.4" r="1.1" fill="currentColor" stroke="none"></circle>
+    </svg></button>`;
 };
 
 const term = (text, key = text) => {
@@ -244,16 +268,16 @@ routes.browse = async () => {
   view.innerHTML = `<section class="lede browse-lede">
       <span class="kicker" style="color:var(--accent)">Browse</span>
       <h1>Start with a house,<br />or with the <em>shape</em> of the book.</h1>
-      <p>Anything underlined explains itself &mdash; hover it.</p>
+      <p>Hover any <span class="info-inline">&#9432;</span> for what the jargon means.</p>
     </section>
 
     <div class="section-head"><span class="kicker no">01</span><h2>Publishers</h2>
-      <span class="kicker aside">Characters, ${term('imprints', 'imprint')} and the full catalogue</span></div>
+      <span class="kicker aside">Characters, imprints and the full catalogue ${info('imprint', 'right')}</span></div>
     <div id="houses" class="house-grid">${
       '<div class="house-tile skeleton-tile"></div>'.repeat(5)}</div>
 
     <div class="section-head"><span class="kicker no">02</span><h2>Formats</h2>
-      <span class="kicker aside">Thickness to scale</span></div>
+      <span class="kicker aside">Thickness to scale ${info('collected edition', 'right')}</span></div>
     <div id="formats" class="format-grid">${
       '<div class="format-card skeleton-tile"></div>'.repeat(9)}</div>`;
 
@@ -270,7 +294,7 @@ routes.browse = async () => {
 
   api('/api/formats').then(({ items }) => {
     document.querySelector('#formats').innerHTML = items.map((f) => `
-      <button class="format-card" data-format="${esc(f.name)}">
+      <div class="format-card" data-format="${esc(f.name)}" role="button" tabindex="0">
         <span class="format-book">
           ${/* The spine is attached to the cover so it reads as one book seen at
                 an angle, rather than a second competing diagram. */ ''}
@@ -278,9 +302,9 @@ routes.browse = async () => {
           ${f.cover ? `<img class="format-cover" src="${esc(f.cover)}" alt="" loading="lazy" />`
                     : '<span class="format-cover"></span>'}
         </span>
-        <span class="disp format-name">${term(f.name)}</span>
+        <span class="disp format-name">${esc(f.name)} ${info(f.name)}</span>
         <span class="format-blurb">${esc(f.blurb)}</span>
-      </button>`).join('');
+      </div>`).join('');
   }).catch(() => { document.querySelector('#formats').innerHTML = ''; });
 };
 
@@ -321,7 +345,8 @@ routes.publisher = async (encoded, pageArg) => {
     </div>
 
     ${house.lines.length ? `
-      <div class="section-head"><span class="kicker no">01</span><h2>Universes &amp; imprints</h2></div>
+      <div class="section-head"><span class="kicker no">01</span><h2>Universes &amp; imprints</h2>
+        <span class="kicker aside">${info('imprint', 'right')}</span></div>
       <div class="chips">${house.lines.map((line) => `
         <button class="chip kicker" data-search="${esc(`${name} ${line}`)}">${esc(line)}</button>`).join('')}</div>` : ''}
 
@@ -449,10 +474,10 @@ function renderFilters() {
     <select data-filter="${key}">${options.map(([v, t]) =>
       `<option value="${esc(v)}"${state.filters[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
   document.querySelector('#filters').innerHTML =
-    select('medium', 'Kind', [['all', 'Comics & manga'], ['comic', 'Comics only'], ['manga', 'Manga only']]) +
-    select('format', 'Format', [['all', 'All formats'], ...editions.map((e) => [e, e])]) +
+    select('medium', `Kind ${info('manga')}`, [['all', 'Comics & manga'], ['comic', 'Comics only'], ['manga', 'Manga only']]) +
+    select('format', `Format ${info('collected edition')}`, [['all', 'All formats'], ...editions.map((e) => [e, e])]) +
     select('publisher', 'Publisher', [['all', 'All publishers'], ...publishers.map((p) => [p, p])]) +
-    select('sort', 'Sort', [
+    select('sort', `Sort ${info('notability')}`, [
       ['relevance', 'Best match'],
       ['notable', 'Most notable'],
       ['newest', 'Newest'],
@@ -523,7 +548,7 @@ routes.thread = async (kind, id) => {
     <section class="thread">
       <div>${coverHtml({ id: thread.id, name: thread.name, image: thread.image }, { ratio: '3 / 4' })}</div>
       <div>
-        <span class="kicker" style="color:var(--accent)">The thread</span>
+        <span class="kicker" style="color:var(--accent)">The thread ${info('thread')}</span>
         <h1>${esc(thread.name)}</h1>
         ${thread.realName || thread.aliases?.length
           ? `<div class="alias">${esc(thread.realName || thread.aliases.slice(0, 3).join(' · '))}</div>` : ''}
@@ -570,8 +595,8 @@ routes.library = async () => {
     </section>
     <div class="stats" style="border-top:0;margin:0 0 26px;padding-top:0">
       <div><span class="kicker">Requested</span><b class="disp">${counts.watching}</b></div>
-      <div><span class="kicker">In library</span><b class="disp" style="color:var(--shelf)">${counts.inLibrary}</b></div>
-      <div><span class="kicker">Still searching</span><b class="disp" style="color:var(--accent)">${counts.searching}</b></div>
+      <div><span class="kicker">In library ${info('in library')}</span><b class="disp" style="color:var(--shelf)">${counts.inLibrary}</b></div>
+      <div><span class="kicker">Still searching ${info('searching')}</span><b class="disp" style="color:var(--accent)">${counts.searching}</b></div>
     </div>
     ${komga ? '' : '<p class="kicker" style="color:var(--accent);padding-bottom:14px">Komga is not connected — every title will read as searching.</p>'}
     <div class="index">${items.map((item, i) => `
@@ -612,7 +637,7 @@ async function openVolume(id) {
         : 'A regular series, collected issue by issue rather than as one book.';
     sheetBody.innerHTML = `
       <div class="sheet-top">
-        <span class="kicker" style="color:var(--accent)">${esc(item.edition)}</span>
+        <span class="kicker" style="color:var(--accent)">${esc(item.edition)} ${info(item.edition)}</span>
         <button id="close-sheet" aria-label="Close">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M6 6l12 12M18 6L6 18"></path></svg>
@@ -679,6 +704,8 @@ async function request(id, button) {
 /* ---------------- events ---------------- */
 
 document.addEventListener('click', (event) => {
+  // The ⓘ is a button inside clickable cards; it explains, it does not navigate.
+  if (event.target.closest('.info')) { event.preventDefault(); event.stopPropagation(); return; }
   const thread = event.target.closest('[data-thread]');
   if (thread) return go(`/thread/${thread.dataset.thread}`);
   const search = event.target.closest('[data-search]');
@@ -704,6 +731,15 @@ document.addEventListener('click', (event) => {
   if (event.target.closest('#close-sheet')) return sheet.close();
   const nav = event.target.closest('#nav button');
   if (nav) return go(`/${nav.dataset.route}`);
+});
+
+// role="button" elements need Enter/Space wired by hand.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const target = event.target.closest('[role="button"]');
+  if (!target) return;
+  event.preventDefault();
+  target.click();
 });
 
 document.addEventListener('change', (event) => {
