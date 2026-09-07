@@ -3,6 +3,10 @@ services:
     build: .
     container_name: comic-requester
     restart: unless-stopped
+    labels:
+      # Lets Unraid's Docker page expose an Open WebUI action for this
+      # Compose-managed container. Using its placeholder avoids DNS reliance.
+      net.unraid.docker.webui: http://[IP]:[PORT:3013]
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -13,7 +17,13 @@ services:
       # reports every watched series as 'Active' whether or not it downloaded.
       KOMGA_URL: http://192.168.40.44:25600
       KOMGA_CONFIG: /run/komf/application.yml
+      # Keep these in the app's protected .env. The mounted Komf config can be
+      # root-only, while this container intentionally runs as an unprivileged
+      # user and must not weaken those file permissions.
+      KOMGA_USER: ${KOMGA_USER:-}
+      KOMGA_PASSWORD: ${KOMGA_PASSWORD:-}
       CACHE_DB: /data/cache.db
+      COVER_DIR: /data/covers
       # Optional. metron.cloud — a community comic database with better story
       # arcs than ComicVine. Auth is a bearer token despite the docs describing
       # basic auth. Put it in a .env beside this file; never commit it.
@@ -30,7 +40,7 @@ services:
     ports:
       - 192.168.40.44:3013:3000
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/ready || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

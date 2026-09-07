@@ -15,13 +15,20 @@
 import { cached } from './store.js';
 
 const BASE = 'https://metron.cloud/api';
-const token = (process.env.METRON_TOKEN || '').trim();
+// Read this lazily. In direct local Node development, server.js loads the
+// gitignored .env after module resolution has begun; capturing it at import time
+// would permanently see an empty value even though the token is available by
+// the first request.
+const token = () => (process.env.METRON_TOKEN || '').trim();
 
 // Their docs describe HTTP basic auth; the API actually accepts a bearer token
 // and rejects basic with "Invalid username/password".
-const authHeader = token ? `Bearer ${token}` : '';
+const authHeader = () => {
+  const value = token();
+  return value ? `Bearer ${value}` : '';
+};
 
-export const available = () => Boolean(token);
+export const available = () => Boolean(token());
 
 const MIN_GAP_MS = 1500;
 let lastCall = 0;
@@ -49,7 +56,7 @@ async function call(path, params = {}) {
   const query = new URLSearchParams(params);
   return schedule(async () => {
     const response = await fetch(`${BASE}/${path}?${query}`, {
-      headers: { Authorization: authHeader, Accept: 'application/json' },
+      headers: { Authorization: authHeader(), Accept: 'application/json' },
       signal: AbortSignal.timeout(20_000),
     });
     if (response.status === 401) throw new Error('Metron rejected the token.');

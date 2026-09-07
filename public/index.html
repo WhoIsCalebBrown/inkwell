@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap" />
-    <link rel="stylesheet" href="/styles.css?v=5" />
+    <link rel="stylesheet" href="/styles.css?v=31" />
   </head>
   <body>
     <header>
@@ -35,13 +35,20 @@
           </svg>
         </div>
         <div class="shelf-count">
-          <span class="kicker">On the shelf</span>
+          <span class="kicker">In library</span>
           <b class="disp" id="shelf-count">—</b>
         </div>
+        <button class="masthead-settings" data-route="settings" aria-label="Settings" title="Settings">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.2"></circle>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9.1a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9.1a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"></path>
+          </svg>
+        </button>
       </div>
       <nav id="nav" aria-label="Sections">
         <button class="kicker" data-route="discover" aria-current="true">Discover</button>
         <button class="kicker" data-route="browse">Browse</button>
+        <button class="kicker" data-route="threads">Characters &amp; creators</button>
         <button class="kicker" data-route="library">My requests</button>
       </nav>
     </header>
@@ -51,6 +58,6 @@
     <dialog id="sheet"><div class="sheet" id="sheet-body"></div></dialog>
     <div id="toast" role="status"></div>
 
-    <script src="/app.js?v=5" type="module"></script>
+    <script src="/app.js?v=41" type="module"></script>
   </body>
 </html>
