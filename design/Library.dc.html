@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<div class="ui" style="width: 1194px; background: #14120d; color: #f4efe2; padding: 0 64px 72px;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 40px 0 18px;">
+    <div class="disp" style="font-size: 34px; line-height: 0.9;">Panel</div>
+    <div style="display: flex; align-items: center; gap: 10px; width: 340px; border-bottom: 1px solid #4d4636; padding-bottom: 7px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6f6754" stroke-width="1.7">
+        <circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path>
+      </svg>
+      <span class="disp" style="font-size: 18px; color: #6f6754; font-style: italic;">Search the catalogue</span>
+    </div>
+  </div>
+
+  <div style="border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #322d22; display: flex; gap: 34px; padding: 13px 0;">
+    <span class="kicker">Discover</span>
+    <span class="kicker">Browse</span>
+    <span class="kicker">Events</span>
+    <span class="kicker" style="color: #f4efe2; border-bottom: 2px solid {{accent}}; padding-bottom: 3px;">My requests</span>
+  </div>
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 50px 0 30px;">
+    <div style="display: flex; flex-direction: column; gap: 14px;">
+      <div class="kicker" style="color: {{accent}};">Your shelf</div>
+      <div class="disp" style="font-size: 72px; line-height: 0.92; letter-spacing: -0.03em;">
+        Sixteen volumes,<br>one <span style="font-style: italic;">web-slinger</span>.
+      </div>
+    </div>
+    <div style="display: flex; gap: 46px; padding-bottom: 8px;">
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <span class="kicker">Watching</span>
+        <span class="disp" style="font-size: 40px; line-height: 1;">16</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <span class="kicker">Downloaded</span>
+        <span class="disp" style="font-size: 40px; line-height: 1; color: #66a98a;">4</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <span class="kicker">Searching</span>
+        <span class="disp" style="font-size: 40px; line-height: 1; color: {{accent}};">12</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- index: a printed contents list, not a card grid -->
+  <div style="display: grid; grid-template-columns: 46px 54px 1fr 132px 92px 128px; gap: 22px; align-items: center;
+              border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #f4efe2; padding: 11px 0;">
+    <span class="kicker">No.</span>
+    <span class="kicker"></span>
+    <span class="kicker">Title</span>
+    <span class="kicker">Publisher</span>
+    <span class="kicker">Year</span>
+    <span class="kicker" style="text-align: right;">Status</span>
+  </div>
+
+  <sc-for list="{{rows}}" as="r" hint-placeholder-count="9">
+    <div style="display: grid; grid-template-columns: 46px 54px 1fr 132px 92px 128px; gap: 22px; align-items: center;
+                border-bottom: 1px solid #322d22; padding: 13px 0;">
+      <span class="kicker" style="color: #4d4636;">{{r.no}}</span>
+      <div style="position: relative; width: 44px; aspect-ratio: 2 / 3; background: {{r.tint}}; overflow: hidden;">
+        <div style="position: absolute; inset: 4px; border: 1px solid rgba(250,247,241,0.3);"></div>
+      </div>
+      <span class="disp" style="font-size: 24px; line-height: 1.15; letter-spacing: -0.01em;">{{r.title}}</span>
+      <span class="ui" style="font-size: 12.5px; color: #948b78;">Marvel</span>
+      <span class="ui" style="font-size: 12.5px; color: #948b78;">{{r.year}}</span>
+      <div style="display: flex; justify-content: flex-end;">
+        <span class="kicker" style="color: {{r.statusColor}};">{{r.status}}</span>
+      </div>
+    </div>
+  </sc-for>
+
+  <div style="display: flex; justify-content: space-between; padding-top: 26px;">
+    <span class="kicker">Showing 9 of 16</span>
+    <span class="kicker" style="color: #f4efe2;">Show all &rarr;</span>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#e0563a';
+    const done = { status: 'Downloaded', statusColor: '#66a98a' };
+    const hunt = { status: 'Searching',  statusColor: accent };
+    const mk = (no, title, year, tint, st) => Object.assign({ no, title, year, tint }, st);
+    return {
+      accent,
+      rows: [
+        mk('01', 'Ultimate Spider-Man Omnibus',                  '2012', '#1d3f6e', done),
+        mk('02', 'Superior Spider-Man Omnibus',                  '2023', '#8d2f1f', done),
+        mk('03', 'Spider-Man 2099 Omnibus',                      '2023', '#4a4634', hunt),
+        mk('04', 'The Spectacular Spider-Man Omnibus',           '2022', '#3d3a52', done),
+        mk('05', 'Spider-Man: Ben Reilly Omnibus',               '2019', '#6b3f86', hunt),
+        mk('06', 'Spider-Man: Brand New Day Omnibus',            '2024', '#25241f', hunt),
+        mk('07', 'Dark Web Omnibus',                             '2025', '#7a4a1e', hunt),
+        mk('08', 'Symbiote Spider-Man by Peter David Omnibus',   '2025', '#66a98a', hunt),
+        mk('09', 'Web of Spider-Man Omnibus',                    '2025', '#1d3f6e', hunt)
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

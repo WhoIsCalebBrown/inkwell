@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<!-- dimmed page behind, sheet on top -->
+<div class="ui" style="position: relative; width: 1194px; height: 880px; background: #1d1a13; overflow: hidden;">
+
+  <div style="position: absolute; inset: 0; background: rgba(23,21,15,0.46);"></div>
+
+  <div style="position: absolute; left: 96px; top: 56px; width: 1002px; background: #14120d;
+              box-shadow: 0 32px 80px rgba(23,21,15,0.4); padding: 44px 48px 46px;">
+
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 22px;
+                border-bottom: 1.5px solid #f4efe2;">
+      <div class="kicker" style="color: {{accent}};">Omnibus &mdash; collected edition</div>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#f4efe2" stroke-width="1.8">
+        <path d="M6 6l12 12M18 6L6 18"></path>
+      </svg>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 292px 1fr; gap: 46px; padding-top: 34px;">
+
+      <div style="display: flex; flex-direction: column; gap: 14px;">
+        <div style="position: relative; aspect-ratio: 2 / 3; background: #1d3f6e; overflow: hidden;">
+          <div style="position: absolute; inset: 12px; border: 1px solid rgba(250,247,241,0.32);"></div>
+          <div class="disp" style="position: absolute; left: 26px; right: 26px; top: 38px; font-size: 36px;
+                      line-height: 0.98; color: #faf7f1; white-space: pre-line;">Ultimate
+Spider-Man</div>
+          <div style="position: absolute; left: 26px; bottom: 30px; width: 62px; height: 3px; background: {{accent}};"></div>
+          <div style="position: absolute; right: -40px; bottom: -40px; width: 170px; height: 170px; border-radius: 50%;
+                      border: 22px solid rgba(250,247,241,0.09);"></div>
+        </div>
+        <div class="kicker" style="text-align: center; color: #4d4636;">Cover art not yet fetched</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 0;">
+        <div style="display: flex; align-items: center; gap: 11px; padding-bottom: 14px;">
+          <span class="kicker">Marvel</span>
+          <span class="kicker" style="color: #4d4636;">/</span>
+          <span class="kicker">Ultimate</span>
+          <span class="kicker" style="color: #4d4636;">/</span>
+          <span class="kicker" style="color: {{accent}};">Spider-Man</span>
+          <span class="kicker" style="color: #4d4636;">/</span>
+          <span class="kicker" style="color: #f4efe2;">This volume</span>
+        </div>
+        <div class="disp" style="font-size: 60px; line-height: 0.92; letter-spacing: -0.025em;">
+          Ultimate Spider-Man <span style="font-style: italic;">Omnibus</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px;
+                    border-top: 1px solid #322d22; margin-top: 26px; padding-top: 18px;">
+          <sc-for list="{{facts}}" as="f" hint-placeholder-count="4">
+            <div style="display: flex; flex-direction: column; gap: 7px;">
+              <span class="kicker">{{f.label}}</span>
+              <span class="disp" style="font-size: 25px; line-height: 1;">{{f.value}}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="font-size: 15.5px; line-height: 1.68; color: #b9b09b; border-top: 1px solid #322d22;
+                    margin-top: 24px; padding-top: 22px;">
+          Brian Michael Bendis and Mark Bagley&rsquo;s ground-up retelling of Peter Parker, collected in
+          oversized hardcover. Runs from the first radioactive spider through the Clone Saga, gathering
+          issues #1&ndash;39 alongside the original scripts and Bagley&rsquo;s pencils.
+        </div>
+
+        <div style="display: flex; gap: 15px; border-left: 2px solid {{accent}}; padding: 3px 0 3px 16px; margin-top: 22px;">
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+            <span class="kicker" style="color: {{accent}};">What is an omnibus?</span>
+            <span class="ui" style="font-size: 13.5px; line-height: 1.6; color: #b9b09b;">
+              One oversized book collecting a long run of issues &mdash; the whole story in a single volume,
+              rather than several thin trade paperbacks.
+            </span>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 26px; margin-top: 30px;">
+          <div class="ui" style="display: inline-flex; align-items: center; gap: 10px; background: #f4efe2; color: #14120d;
+                      font-size: 13px; font-weight: 600; letter-spacing: 0.03em; padding: 15px 26px;">
+            Request this volume
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#14120d" stroke-width="1.8">
+              <path d="M5 12h13M13 6l6 6-6 6"></path>
+            </svg>
+          </div>
+          <span class="disp" style="font-size: 17px; font-style: italic; color: #948b78;
+                      border-bottom: 1px solid #4d4636; padding-bottom: 2px;">View on ComicVine</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      accent: this.props.accent ?? '#e0563a',
+      facts: [
+        { label: 'Publisher', value: 'Marvel' },
+        { label: 'Started',   value: '2012' },
+        { label: 'Issues',    value: '39' },
+        { label: 'Status',    value: 'Not requested' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<div class="ui" style="width: 1194px; background: #14120d; color: #f4efe2; padding: 0 64px 72px;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 40px 0 18px;">
+    <div class="disp" style="font-size: 34px; line-height: 0.9;">Panel</div>
+    <div style="display: flex; align-items: center; gap: 10px; width: 460px; border-bottom: 1.5px solid #f4efe2; padding-bottom: 7px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f4efe2" stroke-width="1.7">
+        <circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path>
+      </svg>
+      <span class="disp" style="font-size: 19px;">spider-man omnibus</span>
+    </div>
+  </div>
+
+  <div style="border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #322d22; display: flex; gap: 34px; padding: 13px 0;">
+    <span class="kicker">Discover</span>
+    <span class="kicker" style="color: #f4efe2; border-bottom: 2px solid {{accent}}; padding-bottom: 3px;">Browse</span>
+    <span class="kicker">Events</span>
+    <span class="kicker">My requests</span>
+  </div>
+
+  <!-- result header -->
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 46px 0 26px;">
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div class="kicker" style="color: {{accent}};">Catalogue search</div>
+      <div class="disp" style="font-size: 62px; line-height: 0.94; letter-spacing: -0.025em;">
+        Results for <span style="font-style: italic;">&ldquo;spider-man omnibus&rdquo;</span>
+      </div>
+    </div>
+    <div class="kicker" style="text-align: right; line-height: 1.7;">34 of 60 results<br>Sorted by best match</div>
+  </div>
+
+  <!-- filter bar: editorial, rules not boxes -->
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 30px;
+              border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #322d22; padding: 16px 0 15px;">
+    <sc-for list="{{filters}}" as="f" hint-placeholder-count="4">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span class="kicker">{{f.label}}</span>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+          <span class="disp" style="font-size: 21px; color: {{f.color}};">{{f.value}}</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#948b78" stroke-width="2">
+            <path d="M6 9l6 6 6-6"></path>
+          </svg>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- active filter chips -->
+  <div style="display: flex; align-items: center; gap: 10px; padding: 18px 0 30px;">
+    <span class="kicker">Active</span>
+    <div style="display: flex; align-items: center; gap: 8px; border: 1px solid #f4efe2; padding: 6px 11px;">
+      <span class="ui" style="font-size: 11.5px; font-weight: 600;">Omnibuses only</span>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f4efe2" stroke-width="2.4">
+        <path d="M6 6l12 12M18 6L6 18"></path>
+      </svg>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; border: 1px solid #f4efe2; padding: 6px 11px;">
+      <span class="ui" style="font-size: 11.5px; font-weight: 600;">Marvel</span>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f4efe2" stroke-width="2.4">
+        <path d="M6 6l12 12M18 6L6 18"></path>
+      </svg>
+    </div>
+  </div>
+
+  <!-- results grid -->
+  <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 26px 22px;">
+    <sc-for list="{{results}}" as="r" hint-placeholder-count="10">
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <div style="position: relative; aspect-ratio: 2 / 3; background: {{r.tint}}; overflow: hidden;">
+          <div style="position: absolute; inset: 9px; border: 1px solid rgba(250,247,241,0.28);"></div>
+          <div class="disp" style="position: absolute; left: 17px; right: 17px; top: 24px; font-size: 21px;
+                      line-height: 1.02; color: #faf7f1; white-space: pre-line;">{{r.short}}</div>
+          <div style="position: absolute; left: 17px; bottom: 19px; width: 34px; height: 2px; background: rgba(250,247,241,0.55);"></div>
+          <sc-if value="{{r.owned}}" hint-placeholder-val="{{true}}">
+            <div class="kicker" style="position: absolute; right: 0; top: 16px; background: #66a98a; color: #faf7f1;
+                        padding: 5px 9px; letter-spacing: 0.14em;">On shelf</div>
+          </sc-if>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <div class="kicker" style="color: {{r.editionColor}};">{{r.edition}}</div>
+          <div class="ui" style="font-size: 13px; font-weight: 600; line-height: 1.32;">{{r.title}}</div>
+          <div class="ui" style="font-size: 11.5px; color: #948b78;">{{r.meta}}</div>
+          <div class="ui" style="margin-top: 5px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.03em;
+                      color: {{r.actionColor}}; border-bottom: 1px solid {{r.actionRule}}; padding-bottom: 4px; align-self: flex-start;">
+            {{r.action}}
+          </div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#e0563a';
+    const own = { action: 'On your shelf', actionColor: '#66a98a', actionRule: '#3c5c4c', owned: true };
+    const req = { action: 'Request →', actionColor: '#f4efe2', actionRule: '#6a6350', owned: false };
+    const mk = (short, title, year, tint, edition, state) => Object.assign({
+      short, title, meta: 'Marvel · ' + year, tint, edition,
+      editionColor: edition === 'Omnibus' ? accent : '#948b78'
+    }, state);
+    return {
+      accent,
+      filters: [
+        { label: 'Format',    value: 'Omnibuses only',  color: '#f4efe2' },
+        { label: 'Publisher', value: 'Marvel',           color: '#f4efe2' },
+        { label: 'Started',   value: 'Any year',         color: '#9b937f' },
+        { label: 'Sort',      value: 'Best match',       color: '#f4efe2' }
+      ],
+      results: [
+        mk('Ultimate\nSpider-Man', 'Ultimate Spider-Man Omnibus', '2012', '#1d3f6e', 'Omnibus', own),
+        mk('Superior\nSpider-Man', 'Superior Spider-Man Omnibus', '2023', '#8d2f1f', 'Omnibus', own),
+        mk('Spider-Man\n2099',     'Spider-Man 2099 Omnibus',     '2023', '#4a4634', 'Omnibus', own),
+        mk('Beyond',                 'The Amazing Spider-Man: Beyond Omnibus', '2023', '#6b3f86', 'Omnibus', req),
+        mk('Gang War',               'Spider-Man: Gang War Omnibus', '2025', '#25241f', 'Omnibus', req),
+        mk('Symbiote',               'Symbiote Spider-Man by Peter David Omnibus', '2025', '#66a98a', 'Omnibus', req),
+        mk('Web of\nSpider-Man',   'Web of Spider-Man Omnibus',   '2025', '#7a4a1e', 'Omnibus', req),
+        mk('Spectacular',            'The Spectacular Spider-Man Omnibus', '2022', '#3d3a52', 'Omnibus', own),
+        mk('Brand\nNew Day',       'Spider-Man: Brand New Day Omnibus', '2024', '#8d2f1f', 'Collected edition', req),
+        mk('Ben Reilly',             'Spider-Man: Ben Reilly Omnibus', '2019', '#1d3f6e', 'Omnibus', req)
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

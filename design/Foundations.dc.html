@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<div class="ui" style="width: 1194px; background: #14120d; color: #f4efe2; padding: 44px 64px 64px;">
+
+  <div style="display: flex; align-items: baseline; gap: 16px; border-bottom: 1.5px solid #f4efe2; padding-bottom: 16px;">
+    <span class="disp" style="font-size: 40px; letter-spacing: -0.02em;">Foundations</span>
+    <span class="kicker">Tokens for implementation</span>
+  </div>
+
+  <!-- type -->
+  <div style="display: flex; flex-direction: column; gap: 18px; padding: 34px 0 30px; border-bottom: 1px solid #322d22;">
+    <span class="kicker" style="color: {{accent}};">Typography</span>
+    <div style="display: grid; grid-template-columns: 168px 1fr; gap: 24px; align-items: baseline;">
+      <span class="kicker">Display / 92 / 0.88</span>
+      <span class="disp" style="font-size: 52px; line-height: 0.9; letter-spacing: -0.025em;">Instrument Serif</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 168px 1fr; gap: 24px; align-items: baseline;">
+      <span class="kicker">Section / 34 / 1.0</span>
+      <span class="disp" style="font-size: 34px; letter-spacing: -0.015em;">On your shelf</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 168px 1fr; gap: 24px; align-items: baseline;">
+      <span class="kicker">Body / 15.5 / 1.68</span>
+      <span class="ui" style="font-size: 15.5px; line-height: 1.68; color: #b9b09b;">Archivo regular carries every label, metadata line and control.</span>
+    </div>
+    <div style="display: grid; grid-template-columns: 168px 1fr; gap: 24px; align-items: baseline;">
+      <span class="kicker">Kicker / 10 / .2em</span>
+      <span class="kicker">Uppercase, 600, letter-spacing 0.2em</span>
+    </div>
+  </div>
+
+  <!-- palette -->
+  <div style="display: flex; flex-direction: column; gap: 18px; padding: 30px 0; border-bottom: 1px solid #322d22;">
+    <span class="kicker" style="color: {{accent}};">Palette</span>
+    <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 16px;">
+      <sc-for list="{{swatches}}" as="s" hint-placeholder-count="7">
+        <div style="display: flex; flex-direction: column; gap: 9px;">
+          <div style="height: 72px; background: {{s.hex}}; border: 1px solid rgba(244,239,226,0.16);"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span class="ui" style="font-size: 11.5px; font-weight: 600;">{{s.name}}</span>
+            <span class="ui" style="font-size: 11px; color: #948b78;">{{s.hex}}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- cover placeholder system -->
+  <div style="display: flex; flex-direction: column; gap: 18px; padding: 30px 0;">
+    <span class="kicker" style="color: {{accent}};">Cover placeholder &mdash; used until ComicVine art loads</span>
+    <div style="display: grid; grid-template-columns: repeat(6, 132px); gap: 20px;">
+      <sc-for list="{{covers}}" as="c" hint-placeholder-count="6">
+        <div style="position: relative; aspect-ratio: 2 / 3; background: {{c.tint}}; overflow: hidden;">
+          <div style="position: absolute; inset: 8px; border: 1px solid rgba(250,247,241,0.28);"></div>
+          <div class="disp" style="position: absolute; left: 15px; right: 15px; top: 20px; font-size: 19px;
+                      line-height: 1.02; color: #faf7f1; white-space: pre-line;">{{c.label}}</div>
+          <div style="position: absolute; left: 15px; bottom: 16px; width: 30px; height: 2px; background: rgba(250,247,241,0.55);"></div>
+        </div>
+      </sc-for>
+    </div>
+    <span class="ui" style="font-size: 13.5px; line-height: 1.6; color: #948b78; max-width: 640px;">
+      Tint is picked deterministically from the series id, so the same title always gets the same colour.
+      Real cover art replaces the block entirely &mdash; the inner rule and 2:3 ratio stay.
+    </span>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      accent: this.props.accent ?? '#e0563a',
+      swatches: [
+        { name: 'Ground',   hex: '#14120d' },
+        { name: 'Surface',  hex: '#1d1a13' },
+        { name: 'Rule',     hex: '#322d22' },
+        { name: 'Muted',    hex: '#948b78' },
+        { name: 'Text',     hex: '#f4efe2' },
+        { name: 'Accent',   hex: '#e0563a' },
+        { name: 'On shelf', hex: '#66a98a' }
+      ],
+      covers: [
+        { tint: '#1d3f6e', label: 'Ultimate\nSpider-Man' },
+        { tint: '#8d2f1f', label: 'Superior' },
+        { tint: '#4a4634', label: 'Spider-Man\n2099' },
+        { tint: '#6b3f86', label: 'Beyond' },
+        { tint: '#25241f', label: 'Gang War' },
+        { tint: '#66a98a', label: 'Symbiote' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+services:
+  comic-requester:
+    ports:
+      - 3013:3000
+    volumes:
+      # Replaces the Unraid config mount for local development. Keys are passed
+      # at launch, so no secret is stored in this checkout.
+      - ./dev-config.ini:/run/mylar/config.ini:ro

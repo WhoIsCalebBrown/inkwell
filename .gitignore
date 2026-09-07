@@ -1,0 +1,5 @@
+node_modules/
+npm-debug.log
+
+# Local ComicVine/Komga cache — rebuildable, and large.
+data/

@@ -1,0 +1,164 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<div class="ui" style="width: 1194px; background: #14120d; color: #f4efe2; padding: 0 64px 76px;">
+
+  <!-- breadcrumb: the chain, always visible -->
+  <div style="display: flex; align-items: center; gap: 11px; padding: 34px 0 20px;">
+    <span class="kicker">Marvel</span>
+    <span class="kicker" style="color: #4d4636;">/</span>
+    <span class="kicker">Earth-616</span>
+    <span class="kicker" style="color: #4d4636;">/</span>
+    <span class="kicker" style="color: {{accent}};">Spider-Man</span>
+  </div>
+
+  <div style="border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #322d22; display: flex; gap: 34px; padding: 13px 0;">
+    <span class="kicker">Discover</span>
+    <span class="kicker" style="color: #f4efe2; border-bottom: 2px solid {{accent}}; padding-bottom: 3px;">Browse</span>
+    <span class="kicker">Events</span>
+    <span class="kicker">My requests</span>
+  </div>
+
+  <!-- hero card -->
+  <div style="display: grid; grid-template-columns: 300px 1fr; gap: 46px; padding: 46px 0 44px; border-bottom: 1px solid #322d22;">
+
+    <div style="display: flex; flex-direction: column; gap: 14px;">
+      <div style="position: relative; aspect-ratio: 3 / 4; background: #8d2f1f; overflow: hidden;">
+        <div style="position: absolute; inset: 12px; border: 1px solid rgba(244,239,226,0.3);"></div>
+        <div style="position: absolute; right: -54px; top: -54px; width: 210px; height: 210px; border-radius: 50%;
+                    border: 24px solid rgba(244,239,226,0.1);"></div>
+        <div class="disp" style="position: absolute; left: 26px; right: 26px; bottom: 30px; font-size: 42px;
+                    line-height: 0.94; color: #f4efe2; white-space: pre-line;">Spider
+Man</div>
+      </div>
+      <span class="kicker" style="text-align: center; color: #5c5443;">Character art not yet fetched</span>
+    </div>
+
+    <div style="display: flex; flex-direction: column;">
+      <div class="kicker" style="color: {{accent}};">Character &mdash; the thread</div>
+      <div class="disp" style="font-size: 88px; line-height: 0.88; letter-spacing: -0.03em; padding-top: 12px;">
+        Spider-Man
+      </div>
+      <div class="disp" style="font-size: 25px; font-style: italic; color: #948b78; padding-top: 8px;">
+        Peter Parker &middot; also Miles Morales, Ben Reilly
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px;
+                  border-top: 1px solid #322d22; margin-top: 30px; padding-top: 20px;">
+        <sc-for list="{{stats}}" as="s" hint-placeholder-count="4">
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <span class="kicker">{{s.label}}</span>
+            <span class="disp" style="font-size: 34px; line-height: 1; color: {{s.color}};">{{s.value}}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="font-size: 15.5px; line-height: 1.68; color: #b9b09b; border-top: 1px solid #322d22;
+                  margin-top: 24px; padding-top: 22px; max-width: 660px;">
+        Sixty years of continuity across three parallel continuities. Start with a run rather than an
+        issue number &mdash; each omnibus below is a complete, self-contained stretch of the story.
+      </div>
+    </div>
+  </div>
+
+  <!-- intersections: where this thread meets others -->
+  <div style="display: flex; align-items: baseline; gap: 16px; padding: 40px 0 18px;">
+    <span class="kicker" style="color: {{accent}};">01</span>
+    <span class="disp" style="font-size: 32px; letter-spacing: -0.015em;">Crosses over with</span>
+    <span class="kicker" style="padding-left: 6px;">Shared volumes and events</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 18px;">
+    <sc-for list="{{crossings}}" as="c" hint-placeholder-count="6">
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div style="position: relative; aspect-ratio: 1 / 1; background: {{c.tint}}; overflow: hidden;">
+          <div style="position: absolute; inset: 7px; border: 1px solid rgba(244,239,226,0.26);"></div>
+          <div class="disp" style="position: absolute; left: 14px; right: 14px; bottom: 13px; font-size: 19px;
+                      line-height: 1; color: #f4efe2;">{{c.name}}</div>
+        </div>
+        <span class="kicker" style="color: #6f6754;">{{c.shared}}</span>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- reading order -->
+  <div style="display: flex; align-items: baseline; gap: 16px; padding: 48px 0 8px;">
+    <span class="kicker" style="color: {{accent}};">02</span>
+    <span class="disp" style="font-size: 32px; letter-spacing: -0.015em;">Reading order</span>
+    <span class="kicker" style="padding-left: 6px;">Chronological by story, not release</span>
+  </div>
+
+  <div style="border-top: 1.5px solid #f4efe2;">
+    <sc-for list="{{order}}" as="v" hint-placeholder-count="5">
+      <div style="display: grid; grid-template-columns: 46px 44px 1fr 150px 128px; gap: 22px; align-items: center;
+                  border-bottom: 1px solid #322d22; padding: 15px 0;">
+        <span class="kicker" style="color: #4d4636;">{{v.no}}</span>
+        <div style="position: relative; width: 40px; aspect-ratio: 2 / 3; background: {{v.tint}}; overflow: hidden;">
+          <div style="position: absolute; inset: 4px; border: 1px solid rgba(244,239,226,0.3);"></div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <span class="disp" style="font-size: 24px; line-height: 1.12;">{{v.title}}</span>
+          <span class="kicker" style="color: #6f6754;">{{v.universe}}</span>
+        </div>
+        <span class="ui" style="font-size: 12.5px; color: #948b78;">{{v.years}}</span>
+        <div style="display: flex; justify-content: flex-end;">
+          <span class="kicker" style="color: {{v.actionColor}}; border-bottom: 1px solid {{v.actionRule}}; padding-bottom: 4px;">{{v.action}}</span>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#e0563a';
+    return {
+      accent,
+      stats: [
+        { label: 'Volumes',   value: '340',  color: '#f4efe2' },
+        { label: 'On shelf',  value: '16',   color: '#66a98a' },
+        { label: 'Events',    value: '8',    color: '#f4efe2' },
+        { label: 'Since',     value: '1962', color: '#f4efe2' }
+      ],
+      crossings: [
+        { name: 'Venom',         tint: '#25241f', shared: '14 volumes' },
+        { name: 'Miles Morales', tint: '#8d2f1f', shared: '9 volumes'  },
+        { name: 'Daredevil',     tint: '#6b2018', shared: '7 volumes'  },
+        { name: 'Black Cat',     tint: '#3d3a52', shared: '6 volumes'  },
+        { name: 'Green Goblin',  tint: '#4a4634', shared: '5 volumes'  },
+        { name: 'Carnage',       tint: '#7a2a2a', shared: '4 volumes'  }
+      ],
+      order: [
+        { no: '01', title: 'Ultimate Spider-Man Omnibus',        universe: 'Ultimate — Earth-1610', years: '2000–2011', tint: '#1d3f6e', action: 'On shelf',  actionColor: '#66a98a', actionRule: '#3c5c4c' },
+        { no: '02', title: 'The Spectacular Spider-Man Omnibus', universe: 'Earth-616',             years: '1976–1998', tint: '#3d3a52', action: 'On shelf',  actionColor: '#66a98a', actionRule: '#3c5c4c' },
+        { no: '03', title: 'Spider-Man: Brand New Day Omnibus',  universe: 'Earth-616',             years: '2008–2010', tint: '#8d2f1f', action: 'Request →', actionColor: '#f4efe2', actionRule: '#6a6350' },
+        { no: '04', title: 'Superior Spider-Man Omnibus',        universe: 'Earth-616',             years: '2013–2014', tint: '#4a4634', action: 'On shelf',  actionColor: '#66a98a', actionRule: '#3c5c4c' },
+        { no: '05', title: 'Spider-Man: Gang War Omnibus',       universe: 'Earth-616',             years: '2023–2024', tint: '#6b3f86', action: 'Request →', actionColor: '#f4efe2', actionRule: '#6a6350' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

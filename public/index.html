@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#111827" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Panel" />
+    <title>Panel — Comic Discovery</title>
+    <link rel="stylesheet" href="/styles.css?v=4" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#discover"><span class="brand-mark">P</span><span>panel</span></a>
+        <nav aria-label="Main navigation">
+          <button class="nav active" data-view="discover"><i>✦</i> Discover</button>
+          <button class="nav" data-action="omnibus"><i>▤</i> Omnibuses</button>
+          <button class="nav" data-view="publishers"><i>◈</i> Publishers</button>
+          <button class="nav" data-view="library"><i>⌑</i> My requests <span id="library-count"></span></button>
+        </nav>
+        <div class="sidebar-foot"><b>COMICVINE + MYLAR</b><p>Discover fast. Request privately.</p></div>
+      </aside>
+      <main>
+        <header class="app-header">
+          <form id="global-search" class="global-search" role="search"><span>⌕</span><input id="search-input" type="search" autocomplete="off" placeholder="Search comics, omnibuses, publishers…" aria-label="Search comics" /><kbd>⌘ K</kbd></form>
+          <button id="theme-button" class="theme-button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+        </header>
+        <div class="content">
+          <section id="discover" class="view active-view">
+            <div class="page-intro"><p class="eyebrow">DISCOVER COMICS</p><h1>Find your next<br />great read.</h1><p>Start with an omnibus, browse a mood, or explore the catalogue. You don’t need to know the jargon.</p></div>
+            <section><div class="section-heading"><h2>Explore by mood</h2><span>Choose what sounds good</span></div><div class="genre-grid">
+              <button data-query="superhero comics" class="genre hero-genre"><b>Superheroes</b><small>Big worlds, iconic characters</small></button><button data-query="science fiction comics" class="genre sci"><b>Science fiction</b><small>Space, future, strange worlds</small></button><button data-query="fantasy comics" class="genre fantasy"><b>Fantasy</b><small>Magic, quests and myths</small></button><button data-query="horror comics" class="genre horror"><b>Horror</b><small>Dark, eerie, supernatural</small></button><button data-query="crime comics" class="genre crime"><b>Crime & mystery</b><small>Noir, detectives, thrillers</small></button><button data-query="manga omnibus" class="genre manga"><b>Manga</b><small>Japanese series and collections</small></button>
+            </div></section>
+            <div id="discover-rails" class="rails" aria-live="polite"></div>
+          </section>
+          <section id="publishers" class="view"><div class="page-intro compact"><p class="eyebrow">BROWSE A UNIVERSE</p><h1>Publishers</h1><p>Different publishers have different vibes. Start with one you recognize.</p></div><div class="publisher-grid">
+            <button data-query="Marvel omnibus" class="publisher marvel"><b>MARVEL</b><span>Spider-Man, X-Men, Avengers</span></button><button data-query="DC omnibus" class="publisher dc"><b>DC</b><span>Batman, Superman, Vertigo</span></button><button data-query="Image Comics" class="publisher image"><b>IMAGE</b><span>Saga, Invincible, creator-owned</span></button><button data-query="Dark Horse Comics" class="publisher darkhorse"><b>DARK HORSE</b><span>Hellboy, fantasy and more</span></button><button data-query="BOOM Studios" class="publisher boom"><b>BOOM! STUDIOS</b><span>Modern horror and fantasy</span></button><button data-query="Manga omnibus" class="publisher manga-pub"><b>MANGA</b><span>Long-running stories, big volumes</span></button>
+          </div></section>
+          <section id="search" class="view"><div class="search-heading"><div><p class="eyebrow">CATALOGUE SEARCH</p><h1 id="search-title">Search results</h1></div><span id="search-count"></span></div><div id="filters" class="filters"><label>Format<select id="format-filter"><option value="all">All formats</option><option value="Omnibus">Omnibuses only</option><option value="Collected edition">Collected editions</option><option value="Series">Individual series</option></select></label><label>Publisher<select id="publisher-filter"><option value="all">All publishers</option></select></label><label>Started<select id="year-filter"><option value="all">Any year</option><option value="2020">2020s</option><option value="2010">2010s</option><option value="2000">2000s</option><option value="older">Before 2000</option></select></label><label>Sort<select id="sort-filter"><option value="relevance">Best match</option><option value="newest">Newest</option><option value="issues">Most issues</option><option value="title">A–Z</option></select></label></div><div id="search-results" class="result-grid"></div><div id="search-empty" class="empty hidden"><b>No exact match</b><p>Try fewer words, a character, a publisher, or a series title.</p></div></section>
+          <section id="library" class="view"><div class="page-intro compact"><p class="eyebrow">YOUR SHELF</p><h1>My requests</h1><p>Series Mylar is watching for you.</p></div><div id="library-grid" class="result-grid"></div><div id="library-empty" class="empty hidden"><b>Your shelf is empty</b><p>Choose Request on any title to add it to Mylar.</p></div></section>
+        </div>
+      </main>
+    </div>
+    <dialog id="details"><button id="close-details" class="close" aria-label="Close">×</button><div id="detail-content"></div></dialog><div id="toast" role="status"></div>
+    <template id="rail-template"><section class="rail"><div class="section-heading"><h2></h2><button class="see-all">See all <span>›</span></button></div><div class="rail-scroll"></div></section></template>
+    <template id="rail-card-template"><article class="rail-card"><img loading="lazy" alt="" /><div class="no-cover">P</div><div class="rail-card-info"><b></b><span></span></div></article></template>
+    <template id="result-template"><article class="result-card"><div class="cover"><img loading="lazy" alt="" /><div class="no-cover">P</div><span class="badge"></span></div><div class="result-info"><p class="publisher"></p><h3></h3><p class="meta"></p><p class="format"></p><div class="actions"><button class="request"></button><button class="more" type="button">Details</button></div></div></article></template>
+    <script src="/app.js?v=4" defer></script>
+  </body>
+</html>

@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<div class="ui" style="width: 1194px; background: #14120d; color: #f4efe2; padding: 0 64px 72px;">
+
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; padding: 40px 0 18px;">
+    <div class="disp" style="font-size: 34px; line-height: 0.9;">Panel</div>
+    <div style="display: flex; align-items: center; gap: 10px; width: 340px; border-bottom: 1px solid #4d4636; padding-bottom: 7px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6f6754" stroke-width="1.7">
+        <circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path>
+      </svg>
+      <span class="disp" style="font-size: 18px; color: #6f6754; font-style: italic;">Search the catalogue</span>
+    </div>
+  </div>
+
+  <div style="border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #322d22; display: flex; gap: 34px; padding: 13px 0;">
+    <span class="kicker">Discover</span>
+    <span class="kicker" style="color: #f4efe2; border-bottom: 2px solid {{accent}}; padding-bottom: 3px;">Browse</span>
+    <span class="kicker">Events</span>
+    <span class="kicker">My requests</span>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 16px; padding: 50px 0 34px; max-width: 620px;">
+    <div class="kicker" style="color: {{accent}};">Browse a universe</div>
+    <div class="disp" style="font-size: 72px; line-height: 0.92; letter-spacing: -0.03em;">
+      Start with a house<br>you already <span style="font-style: italic;">trust</span>.
+    </div>
+  </div>
+
+  <div style="border-top: 1.5px solid #f4efe2;">
+    <sc-for list="{{houses}}" as="h" hint-placeholder-count="6">
+      <div style="display: grid; grid-template-columns: 58px 1fr 148px; gap: 28px; align-items: start;
+                  border-bottom: 1px solid #322d22; padding: 26px 0;">
+        <div style="width: 40px; height: 40px; background: {{h.tint}};"></div>
+        <div style="display: flex; flex-direction: column; gap: 13px;">
+          <span class="disp" style="font-size: 44px; line-height: 0.96; letter-spacing: -0.02em;">{{h.name}}</span>
+          <span class="ui" style="font-size: 14px; line-height: 1.6; color: #948b78; max-width: 560px;">{{h.blurb}}</span>
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; padding-top: 3px;">
+            <sc-for list="{{h.lines}}" as="l" hint-placeholder-count="3">
+              <span class="kicker" style="color: #c8bfa8; border: 1px solid #322d22; padding: 7px 11px;">{{l}}</span>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 5px;">
+          <span class="disp" style="font-size: 30px; line-height: 1;">{{h.count}}</span>
+          <span class="kicker">volumes</span>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      accent: this.props.accent ?? '#e0563a',
+      houses: [
+        { name: 'Marvel',        tint: '#8d2f1f', count: '1,240', lines: ['Earth-616', 'Ultimate', 'Max', 'Star Wars'], blurb: 'Spider-Man, X-Men, the Avengers — and the omnibus line that collects them properly.' },
+        { name: 'DC',            tint: '#1d3f6e', count: '980',   lines: ['Prime Earth', 'Vertigo', 'Black Label', 'Absolute'], blurb: 'Batman, Superman and the Vertigo back catalogue.' },
+        { name: 'Image',         tint: '#25241f', count: '412',   lines: ['Skybound', 'Top Cow', 'Creator-owned'], blurb: 'Creator-owned: Saga, Invincible, Monstress. Browsed by creator rather than character.' },
+        { name: 'Dark Horse',    tint: '#4a4634', count: '318',   lines: ['Mignolaverse', 'Berger Books', 'Licensed'], blurb: 'Hellboy, Sin City, and a deep licensed shelf.' },
+        { name: 'BOOM! Studios', tint: '#7a4a1e', count: '156',   lines: ['BOOM! Box', 'Archaia'], blurb: 'Modern horror, fantasy and Something is Killing the Children.' },
+        { name: 'Manga',         tint: '#66a98a', count: '2,105', lines: ['VIZ Signature', 'Kodansha', 'Seven Seas'], blurb: 'Long-running series in fat omnibus collections. Threaded by creator and franchise, not character.' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; background: #14120d; }
+    a { color: #e0563a; text-decoration: none; }
+    a:hover { color: #f2765a; }
+    .disp { font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, serif; font-weight: 400; }
+    .ui { font-family: 'Archivo', 'Helvetica Neue', system-ui, sans-serif; }
+    .kicker { font-family: 'Archivo', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.2em; text-transform: uppercase; color: #948b78; }
+  </style>
+</helmet>
+
+<div class="ui" style="width: 1194px; background: #14120d; color: #f4efe2; padding: 44px 64px 64px;">
+
+  <div style="display: flex; align-items: baseline; gap: 18px; border-bottom: 1.5px solid #f4efe2; padding-bottom: 16px;">
+    <span class="disp" style="font-size: 40px; letter-spacing: -0.02em;">The shape of a library</span>
+    <span class="kicker">Navigation model</span>
+  </div>
+
+  <!-- the chain -->
+  <div style="display: grid; grid-template-columns: 1fr 40px 1fr 40px 1fr 40px 1fr; align-items: center; gap: 0; padding: 40px 0 10px;">
+
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1px solid #322d22; background: #1d1a13; padding: 20px;">
+      <span class="kicker" style="color: {{accent}};">Tier 1</span>
+      <span class="disp" style="font-size: 30px; line-height: 1;">Publisher</span>
+      <span class="ui" style="font-size: 12.5px; color: #948b78; line-height: 1.5;">Marvel, Image, Kodansha</span>
+    </div>
+
+    <div style="display: grid; place-items: center;">
+      <svg width="22" height="14" viewBox="0 0 24 14" fill="none" stroke="#4d4636" stroke-width="1.6">
+        <path d="M0 7h20M15 2l5 5-5 5"></path>
+      </svg>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1px solid #322d22; background: #1d1a13; padding: 20px;">
+      <span class="kicker" style="color: {{accent}};">Tier 2</span>
+      <span class="disp" style="font-size: 30px; line-height: 1;">Line</span>
+      <span class="ui" style="font-size: 12.5px; color: #948b78; line-height: 1.5;">Earth-616, Vertigo, VIZ Signature</span>
+    </div>
+
+    <div style="display: grid; place-items: center;">
+      <svg width="22" height="14" viewBox="0 0 24 14" fill="none" stroke="#4d4636" stroke-width="1.6">
+        <path d="M0 7h20M15 2l5 5-5 5"></path>
+      </svg>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1.5px solid {{accent}}; background: #241b16; padding: 20px;">
+      <span class="kicker" style="color: {{accent}};">Tier 3 &mdash; the flexible one</span>
+      <span class="disp" style="font-size: 30px; line-height: 1;">Thread</span>
+      <span class="ui" style="font-size: 12.5px; color: #c8bfa8; line-height: 1.5;">Whatever a reader actually follows</span>
+    </div>
+
+    <div style="display: grid; place-items: center;">
+      <svg width="22" height="14" viewBox="0 0 24 14" fill="none" stroke="#4d4636" stroke-width="1.6">
+        <path d="M0 7h20M15 2l5 5-5 5"></path>
+      </svg>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1px solid #322d22; background: #1d1a13; padding: 20px;">
+      <span class="kicker" style="color: {{accent}};">Tier 4</span>
+      <span class="disp" style="font-size: 30px; line-height: 1;">Volume</span>
+      <span class="ui" style="font-size: 12.5px; color: #948b78; line-height: 1.5;">The thing you request</span>
+    </div>
+  </div>
+
+  <!-- thread kinds -->
+  <div style="display: flex; align-items: baseline; gap: 16px; padding: 42px 0 16px;">
+    <span class="kicker" style="color: {{accent}};">01</span>
+    <span class="disp" style="font-size: 30px;">A thread is one of four things</span>
+    <span class="kicker" style="padding-left: 4px;">All four exist in ComicVine already</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px;">
+    <sc-for list="{{kinds}}" as="k" hint-placeholder-count="4">
+      <div style="display: flex; flex-direction: column; gap: 10px; border-top: 2px solid {{k.tint}}; padding-top: 15px;">
+        <span class="disp" style="font-size: 26px; line-height: 1;">{{k.name}}</span>
+        <span class="ui" style="font-size: 12.5px; color: #948b78; line-height: 1.55;">{{k.desc}}</span>
+        <span class="kicker" style="color: #5c5443; padding-top: 3px;">{{k.api}}</span>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- crossover -->
+  <div style="display: flex; align-items: baseline; gap: 16px; padding: 46px 0 16px;">
+    <span class="kicker" style="color: {{accent}};">02</span>
+    <span class="disp" style="font-size: 30px;">Threads intersect</span>
+    <span class="kicker" style="padding-left: 4px;">A volume can belong to several &mdash; that is the crossover</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; align-items: stretch;">
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1px solid #322d22; background: #1d1a13; padding: 18px;">
+      <span class="kicker">Thread</span>
+      <span class="disp" style="font-size: 25px; line-height: 1;">Spider-Man</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1.5px solid {{accent}}; background: #241b16; padding: 18px;">
+      <span class="kicker" style="color: {{accent}};">Shared volume</span>
+      <span class="disp" style="font-size: 25px; line-height: 1;">Dark Web Omnibus</span>
+      <span class="ui" style="font-size: 12px; color: #c8bfa8;">Reachable from either side, filed under both</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 9px; border: 1px solid #322d22; background: #1d1a13; padding: 18px;">
+      <span class="kicker">Thread</span>
+      <span class="disp" style="font-size: 25px; line-height: 1;">Venom</span>
+    </div>
+  </div>
+
+  <!-- degradation table -->
+  <div style="display: flex; align-items: baseline; gap: 16px; padding: 46px 0 14px;">
+    <span class="kicker" style="color: {{accent}};">03</span>
+    <span class="disp" style="font-size: 30px;">The same four tiers, three kinds of book</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 168px repeat(4, minmax(0, 1fr)); gap: 20px;
+              border-top: 1.5px solid #f4efe2; border-bottom: 1px solid #322d22; padding: 12px 0;">
+    <span class="kicker"></span>
+    <span class="kicker">Publisher</span>
+    <span class="kicker">Line</span>
+    <span class="kicker" style="color: {{accent}};">Thread</span>
+    <span class="kicker">Volume</span>
+  </div>
+
+  <sc-for list="{{genres}}" as="g" hint-placeholder-count="3">
+    <div style="display: grid; grid-template-columns: 168px repeat(4, minmax(0, 1fr)); gap: 20px;
+                align-items: baseline; border-bottom: 1px solid #322d22; padding: 16px 0;">
+      <span class="disp" style="font-size: 23px; color: {{accent}};">{{g.kind}}</span>
+      <span class="ui" style="font-size: 13px; color: #c8bfa8;">{{g.pub}}</span>
+      <span class="ui" style="font-size: 13px; color: #c8bfa8;">{{g.line}}</span>
+      <span class="ui" style="font-size: 13px; color: #f4efe2; font-weight: 600;">{{g.thread}}</span>
+      <span class="ui" style="font-size: 13px; color: #c8bfa8;">{{g.vol}}</span>
+    </div>
+  </sc-for>
+
+  <div style="border-left: 2px solid {{accent}}; padding: 4px 0 4px 16px; margin-top: 26px;">
+    <span class="ui" style="font-size: 13.5px; line-height: 1.65; color: #b9b09b;">
+      When a book has no meaningful thread &mdash; a one-shot, an anthology &mdash; tier 3 collapses and
+      the reader goes publisher &rarr; volume. The chain shortens; it never breaks.
+    </span>
+  </div>
+
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#e0563a","options":["#e0563a","#4f8fd6","#66a98a","#a97fd0"],"section":"Theme"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      accent: this.props.accent ?? '#e0563a',
+      kinds: [
+        { name: 'Character', tint: '#e0563a', desc: 'Spider-Man, Batman, Guts. The default for superhero books.',        api: 'ComicVine /characters' },
+        { name: 'Team',      tint: '#4f8fd6', desc: 'X-Men, Avengers, the Endless. A group read as one thread.',          api: 'ComicVine /teams' },
+        { name: 'Creator',   tint: '#66a98a', desc: 'Junji Ito, Brian K. Vaughan. Carries manga and creator-owned work.', api: 'ComicVine /people' },
+        { name: 'Event',     tint: '#a97fd0', desc: 'Dark Web, Secret Wars. A crossing point rather than a person.',      api: 'ComicVine /story_arcs' }
+      ],
+      genres: [
+        { kind: 'Superhero',     pub: 'Marvel',   line: 'Earth-616',      thread: 'Character — Spider-Man', vol: 'Superior Spider-Man Omnibus' },
+        { kind: 'Manga',         pub: 'Kodansha', line: 'VIZ Signature',  thread: 'Creator — Junji Ito',    vol: 'Uzumaki (3-in-1 Deluxe)' },
+        { kind: 'Creator-owned', pub: 'Image',    line: '—',              thread: 'Creator — B. K. Vaughan', vol: 'Saga Compendium One' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Screens" },
+    { "id": "page-2", "name": "Model & tokens" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html",        "x": 0,    "y": 0,    "w": 1194, "h": 1720, "title": "Discover",      "page": "page-1" },
+    { "file": "Publishers.dc.html",  "x": 1314, "y": 0,    "w": 1194, "h": 1560, "title": "Browse — publishers & lines", "page": "page-1" },
+    { "file": "Hero.dc.html",        "x": 2628, "y": 0,    "w": 1194, "h": 1760, "title": "Thread — hero card", "page": "page-1" },
+    { "file": "Detail.dc.html",      "x": 3942, "y": 0,    "w": 1194, "h": 940,  "title": "Volume detail",  "page": "page-1" },
+    { "file": "Search.dc.html",      "x": 0,    "y": 1900, "w": 1194, "h": 1850, "title": "Search results", "page": "page-1" },
+    { "file": "Library.dc.html",     "x": 1314, "y": 1900, "w": 1194, "h": 1320, "title": "My requests",    "page": "page-1" },
+    { "file": "Model.dc.html",       "x": 0,    "y": 0,    "w": 1194, "h": 1420, "title": "Navigation model", "page": "page-2" },
+    { "file": "Foundations.dc.html", "x": 1314, "y": 0,    "w": 1194, "h": 1020, "title": "Foundations",    "page": "page-2" }
+  ],
+  "annotations": [
+    { "id": "flow", "x": 0, "y": -210, "w": 900, "page": "page-1",
+      "text": "The chain: Publisher → Line → Thread → Volume.\nBrowse and the breadcrumb carry it; Discover short-cuts straight to threads you already follow. Left to right below is one journey: Marvel → Ultimate → Spider-Man → the volume." },
+    { "id": "threadnote", "x": 2628, "y": -210, "w": 620, "page": "page-1",
+      "text": "The hero card is the thread view. For manga or creator-owned books the same card holds a creator or a franchise instead of a character — only the kicker changes." },
+    { "id": "modelnote", "x": 0, "y": -190, "w": 700, "page": "page-2",
+      "text": "Why a \"thread\" rather than a \"hero\": it is whatever a reader follows. Character, team, creator or event — all four already exist as ComicVine resources, so this is buildable against the API you have." }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}
