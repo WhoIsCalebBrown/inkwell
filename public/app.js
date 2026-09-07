@@ -23,6 +23,22 @@ function setPoster(px, persist = true) {
 try { setPoster(localStorage.getItem('panel:poster') ?? 150, false); } catch { setPoster(150, false); }
 poster.addEventListener('input', (event) => setPoster(event.target.value));
 
+// How many titles a page shows. Kept beside poster size because they are the
+// same kind of preference: how much you want on screen at once.
+const PAGE_SIZES = [24, 48, 72, 96];
+function pageSize() {
+  try {
+    const stored = Number(localStorage.getItem('panel:pagesize'));
+    return PAGE_SIZES.includes(stored) ? stored : 48;
+  } catch { return 48; }
+}
+function setPageSize(value) {
+  try { localStorage.setItem('panel:pagesize', String(value)); } catch { /* private mode */ }
+}
+const perPageSelect = (id) => `<label><span class="kicker">Per page</span>
+  <select data-pagesize id="${id}">${PAGE_SIZES.map((n) =>
+    `<option value="${n}"${n === pageSize() ? ' selected' : ''}>${n} titles</option>`).join('')}</select></label>`;
+
 /* ---------------- plumbing ---------------- */
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -173,49 +189,41 @@ routes.discover = async () => {
 /* ---------------- browse ---------------- */
 
 routes.browse = async () => {
-  view.innerHTML = `<section class="lede">
+  // Browse is a choice of axis, not a publisher list: publisher is only one of
+  // the ways in, and leading with it hid formats and kinds entirely.
+  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:30px">
       <span class="kicker" style="color:var(--accent)">Browse</span>
-      <h1>Start with a house<br />you already <em>trust</em>.</h1>
-      <p>Each publisher leads to its lines and its characters. Search above to
-         jump straight to a thread.</p>
+      <h1>Find it the way<br />you already <em>think</em> about it.</h1>
+      <p>By the house that published it, the shape of the book, or who made it.</p>
     </section>
-    <div id="houses">${skeletons(3, '1fr')}</div>`;
+
+    <div class="section-head"><span class="kicker no">01</span><h2>By format</h2>
+      <span class="kicker aside">The shape of the book</span></div>
+    <div class="chips">${
+      ['Omnibus', 'Compendium', 'Absolute', 'Epic Collection', 'Masterworks',
+       'Deluxe edition', 'Library edition', 'Hardcover', 'Collected edition']
+        .map((f) => `<button class="chip kicker" data-format="${esc(f)}">${esc(f)}</button>`).join('')}</div>
+
+    <div class="section-head"><span class="kicker no">02</span><h2>By kind</h2></div>
+    <div class="chips">
+      <button class="chip kicker" data-kind="comic">Comics</button>
+      <button class="chip kicker" data-kind="manga">Manga</button>
+    </div>
+
+    <div class="section-head"><span class="kicker no">03</span><h2>By publisher</h2>
+      <span class="kicker aside">Characters, imprints and the full catalogue</span></div>
+    <div id="houses">${skeletons(5, 'repeat(auto-fill,minmax(160px,1fr))')}</div>`;
 
   const { items } = await api('/api/publishers');
-  document.querySelector('#houses').innerHTML = `<div class="index">${
+  document.querySelector('#houses').innerHTML = `<div class="house-grid">${
     items.map((house) => `
-      <div class="house">
-        <div class="swatch${house.logo ? ' logo' : ''}" style="${house.logo ? '' : `background:${tintFor(house.name)}`}">
-          ${house.logo ? `<img src="${esc(house.logo)}" alt="${esc(house.name)}" loading="lazy" />` : ''}
-        </div>
-        <div>
-          <h2 class="disp"><button data-publisher="${esc(house.name)}" style="all:unset;cursor:pointer">${esc(house.name)}</button></h2>
-          <div class="chips">${house.lines.map((line) => `
-            <button class="chip kicker" data-search="${esc(`${house.name} ${line}`)}">${esc(line)}</button>`).join('')}</div>
-          ${house.browsable ? `<div id="chars-${esc(house.name.replace(/\W+/g, ''))}" class="pub-chars"></div>` : ''}
-        </div>
-        <button class="kicker" data-publisher="${esc(house.name)}" style="white-space:nowrap">All books →</button>
-      </div>`).join('')}</div>`;
-
-  // Each publisher's own characters, confirmed against the record rather than
-  // guessed from the search term — searching "Marvel" used to return DC heroes.
-  for (const house of items.filter((h) => h.browsable)) {
-    const slot = document.querySelector(`#chars-${house.name.replace(/\W+/g, '')}`);
-    if (!slot) continue;
-    slot.innerHTML = `<div class="rail">${skeletonCard.repeat(6)}</div>`;
-    api(`/api/publisher/${encodeURIComponent(house.name)}/characters`)
-      .then(({ items: chars }) => {
-        slot.innerHTML = chars.length ? `<div class="rail">${chars.slice(0, 14).map((c) => `
-          <article class="card">
-            <button data-thread="character/${esc(c.id)}" style="all:unset;cursor:pointer">
-              ${coverHtml({ id: c.id, name: c.name, image: c.image }, { ratio: '1 / 1' })}
-            </button>
-            <div class="meta"><h3>${esc(c.name)}</h3>
-              <span class="sub">${c.appearances.toLocaleString()} appearances</span></div>
-          </article>`).join('')}</div>` : '';
-      })
-      .catch(() => { slot.innerHTML = ''; });
-  }
+      <button class="house-tile" data-publisher="${esc(house.name)}">
+        <span class="house-logo">${house.logo
+          ? `<img src="${esc(house.logo)}" alt="" loading="lazy" />`
+          : `<span class="disp" style="font-size:22px">${esc(house.name.slice(0, 2))}</span>`}</span>
+        <span class="disp house-name">${esc(house.name)}</span>
+        <span class="kicker">${house.lines.length} imprints</span>
+      </button>`).join('')}</div>`;
 };
 
 routes.publisher = async (encoded, pageArg) => {
@@ -230,13 +238,13 @@ routes.publisher = async (encoded, pageArg) => {
 
   const [houses] = await Promise.all([api('/api/publishers'), loadShelf().catch(() => {})]);
   const house = houses.items.find((h) => h.name === name) ?? { name, lines: [], logo: null };
-  const data = await api(`/api/publisher/${encodeURIComponent(name)}/volumes?page=${page}`);
+  const data = await api(`/api/publisher/${encodeURIComponent(name)}/volumes?page=${page}&size=${pageSize()}`);
 
   const pager = (position) => `
     <div class="pager ${position}">
       ${page > 1 ? `<button class="kicker" data-page="${page - 1}">← Previous</button>` : '<span></span>'}
       <span class="kicker">Page ${page.toLocaleString()} of ${data.pages.toLocaleString()}
-        · ${data.total.toLocaleString()} volumes</span>
+        · ${data.total.toLocaleString()} titles</span>
       ${page < data.pages ? `<button class="kicker" data-page="${page + 1}">Next →</button>` : '<span></span>'}
     </div>`;
 
@@ -248,7 +256,7 @@ routes.publisher = async (encoded, pageArg) => {
         <h1 class="disp">${esc(name)}</h1>
         ${house.deck ? `<p class="deck">${esc(house.deck)}</p>` : ''}
         <div class="stats" style="border-top:0;margin-top:18px;padding-top:0">
-          <div><span class="kicker">Volumes</span><b class="disp">${data.total.toLocaleString()}</b></div>
+          <div><span class="kicker">Titles</span><b class="disp">${data.total.toLocaleString()}</b></div>
           <div><span class="kicker">Lines</span><b class="disp">${house.lines.length}</b></div>
         </div>
       </div>
@@ -262,8 +270,8 @@ routes.publisher = async (encoded, pageArg) => {
     <div id="pub-chars-${slug}"></div>
     <div id="pub-teams-${slug}"></div>
 
-    <div class="section-head"><span class="kicker no">04</span><h2>All books</h2>
-      <span class="kicker aside">Newest first</span></div>
+    <div class="section-head"><span class="kicker no">04</span><h2>All titles</h2>
+      <div class="aside filters" style="border:0;padding:0;grid-template-columns:auto">${perPageSelect('pub-size')}</div></div>
     ${pager('top')}
     <div class="grid">${data.items.map(volumeCard).join('')}</div>
     ${pager('bottom')}`;
@@ -301,19 +309,23 @@ routes.publisher = async (encoded, pageArg) => {
 
 /* ---------------- search ---------------- */
 
-routes.search = async (encoded) => {
+routes.search = async (encoded, scoped) => {
   const query = decodeURIComponent(encoded || '');
+  state.scope = scoped ? decodeURIComponent(scoped) : '';
   searchInput.value = query;
   view.innerHTML = `<section class="lede" style="border:0;padding-bottom:24px">
       <span class="kicker" style="color:var(--accent)">Search</span>
       <h1>Results for <em>“${esc(query)}”</em></h1>
     </section>
+    ${state.scope ? `<div class="chips" style="padding-bottom:18px">
+      <span class="chip kicker">Within ${esc(state.scope)}</span></div>` : ''}
     <div id="threads"></div>
     <div id="books">${skeletons(10)}</div>`;
 
   // Threads first: they are how you get into the graph, and they answer a
   // different question from "which book is this".
-  api(`/api/threads?q=${encodeURIComponent(query)}`).then(({ groups }) => {
+  api(`/api/threads?q=${encodeURIComponent(query)}${state.scope ? `&publisher=${encodeURIComponent(state.scope)}` : ''}`)
+    .then(({ groups }) => {
     const el = document.querySelector('#threads');
     if (!groups?.length) return;
     el.innerHTML = groups.map((group) => `
@@ -332,7 +344,8 @@ routes.search = async (encoded) => {
   try {
     await loadShelf().catch(() => {});
     state.query = query;
-    state.filters = { format: 'all', medium: 'all', publisher: 'all', sort: 'relevance' };
+    state.filters = { format: 'all', medium: 'all', publisher: 'all', sort: 'relevance', ...(state.pendingFilters ?? {}) };
+    state.pendingFilters = null;
     books.innerHTML = `<div class="section-head"><h2>Books</h2>
         <span class="kicker aside" id="count"></span></div>
       <div class="filters" id="filters"></div>
@@ -351,9 +364,10 @@ async function loadBooks() {
   results.innerHTML = skeletons(10);
   const format = state.filters.format;
   const medium = state.filters.medium;
-  const url = `/api/search?q=${encodeURIComponent(state.query)}`
+  const url = `/api/search?q=${encodeURIComponent(state.query)}&size=${pageSize()}`
     + (format && format !== 'all' ? `&edition=${encodeURIComponent(format)}` : '')
-    + (medium && medium !== 'all' ? `&medium=${encodeURIComponent(medium)}` : '');
+    + (medium && medium !== 'all' ? `&medium=${encodeURIComponent(medium)}` : '')
+    + (state.scope ? `&publisher=${encodeURIComponent(state.scope)}` : '');
   try {
     const data = await api(url);
     state.results = data.items;
@@ -385,7 +399,8 @@ function renderFilters() {
       ['newest', 'Newest'],
       ['issues', 'Most issues'],
       ['title', 'A–Z'],
-    ]);
+    ]) +
+    perPageSelect('search-size');
 }
 
 function renderResults() {
@@ -593,9 +608,22 @@ document.addEventListener('click', (event) => {
   const thread = event.target.closest('[data-thread]');
   if (thread) return go(`/thread/${thread.dataset.thread}`);
   const search = event.target.closest('[data-search]');
-  if (search) return go(`/search/${encodeURIComponent(search.dataset.search)}`);
+  if (search) {
+    const scope = search.dataset.publisher ? `/${encodeURIComponent(search.dataset.publisher)}` : '';
+    return go(`/search/${encodeURIComponent(search.dataset.search)}${scope}`);
+  }
   const house = event.target.closest('[data-publisher]');
   if (house) return go(`/publisher/${encodeURIComponent(house.dataset.publisher)}`);
+  const fmt = event.target.closest('[data-format]');
+  if (fmt) {
+    state.pendingFilters = { format: fmt.dataset.format };
+    return go(`/search/${encodeURIComponent(fmt.dataset.format.toLowerCase())}`);
+  }
+  const kind = event.target.closest('[data-kind]');
+  if (kind) {
+    state.pendingFilters = { medium: kind.dataset.kind };
+    return go(`/search/${encodeURIComponent(kind.dataset.kind === 'manga' ? 'manga' : 'comics')}`);
+  }
   const pageBtn = event.target.closest('[data-page]');
   if (pageBtn && state.publisher) {
     return go(`/publisher/${encodeURIComponent(state.publisher.name)}/${pageBtn.dataset.page}`);
@@ -615,6 +643,13 @@ document.addEventListener('change', (event) => {
   state.filters[filter.dataset.filter] = filter.value;
   if (filter.dataset.filter === 'format' || filter.dataset.filter === 'medium') loadBooks();
   else renderResults();
+});
+
+document.addEventListener('change', (event) => {
+  const size = event.target.closest('[data-pagesize]');
+  if (!size) return;
+  setPageSize(Number(size.value));
+  render();
 });
 
 document.querySelector('#search-form').addEventListener('submit', (event) => {

@@ -360,7 +360,8 @@ const SEARCH_RESOURCES = { character: 'character', team: 'team', person: 'person
 
 app.get('/api/threads', async (req, res, next) => {
   const q = String(req.query.q || '').trim();
-  if (q.length < 2) return res.json({ items: [] });
+  const publisher = String(req.query.publisher || '').trim();
+  if (q.length < 2) return res.json({ groups: [], total: 0 });
   try {
     const rows = await cached(`threads:${normalise(q)}`, 24 * 60 * 60_000, () =>
       comicVine('search', {
@@ -381,6 +382,7 @@ app.get('/api/threads', async (req, res, next) => {
         appearances: Number(x.count_of_issue_appearances) || 0,
         image: x.image?.medium_url ?? null,
       }))
+      .filter((x) => !publisher || String(x.publisher || '').startsWith(publisher))
       .sort((a, b) => b.appearances - a.appearances);
     // Bucket by kind before trimming. Creators and story arcs carry no issue
     // appearance count, so a single global sort by prominence buries them
@@ -532,7 +534,7 @@ app.get('/api/publishers', async (_req, res, next) => {
 // resource carries its full volume list: 14,156 entries for Marvel, as bare
 // {id, name} in a 3 MB payload. So membership comes from there, and a page of
 // it is hydrated with one id-filtered call (40 volumes in under a second).
-const PAGE_SIZE = 48;
+const DEFAULT_PAGE_SIZE = 48;
 
 async function publisherVolumeIds(comicvineId) {
   return cached(`publisher:${comicvineId}:volumeids`, 30 * 24 * 60 * 60_000, async () => {
@@ -545,15 +547,16 @@ async function publisherVolumeIds(comicvineId) {
 app.get('/api/publisher/:name/volumes', async (req, res, next) => {
   const name = String(req.params.name);
   const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(12, Number(req.query.size) || DEFAULT_PAGE_SIZE));
   try {
     const house = (await loadPublishers()).find((p) => p.name === name);
     if (!house?.comicvineId) return res.status(404).json({ error: `Unknown publisher "${name}".` });
     const ids = await publisherVolumeIds(house.comicvineId);
-    const slice = ids.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const slice = ids.slice((page - 1) * pageSize, page * pageSize);
     const [rows, library] = await Promise.all([
       slice.length
         ? cached(`volumes:batch:${slice[0]}:${slice.length}`, 7 * 24 * 60 * 60_000, () =>
-            comicVine('volumes', { filter: `id:${slice.join('|')}`, limit: String(PAGE_SIZE), field_list: VOLUME_FIELDS }))
+            comicVine('volumes', { filter: `id:${slice.join('|')}`, limit: String(pageSize), field_list: VOLUME_FIELDS }))
         : [],
       watchlist(),
     ]);
@@ -564,9 +567,9 @@ app.get('/api/publisher/:name/volumes', async (req, res, next) => {
     res.json({
       publisher: name,
       page,
-      pageSize: PAGE_SIZE,
+      pageSize,
       total: ids.length,
-      pages: Math.ceil(ids.length / PAGE_SIZE),
+      pages: Math.ceil(ids.length / pageSize),
       items,
     });
   } catch (error) { next(error); }
@@ -614,6 +617,10 @@ app.get('/api/search', async (req, res, next) => {
   const q = String(req.query.q || '').trim();
   const edition = EDITIONS.some(([name]) => name === req.query.edition) ? String(req.query.edition) : '';
   const medium = ['comic', 'manga'].includes(req.query.medium) ? String(req.query.medium) : '';
+  // Imprint chips search terms like "Marvel Earth-616", which ComicVine happily
+  // answers with DC characters. Scoping by publisher makes that impossible.
+  const publisher = String(req.query.publisher || '').trim();
+  const size = Math.min(120, Math.max(12, Number(req.query.size) || 48));
   if (q.length < 2) return res.json({ items: [], editions: EDITIONS.map(([name]) => name) });
   try {
     const [raw, library] = await Promise.all([
@@ -639,10 +646,11 @@ app.get('/api/search', async (req, res, next) => {
       // discarded every one of them before the filter could see them.
       .filter(({ item }) => !edition || item.edition === edition)
       .filter(({ item }) => !medium || item.medium === medium)
+      .filter(({ item }) => !publisher || String(item.publisher || '').startsWith(publisher))
       .sort((a, b) => b.score - a.score
         || b.notability - a.notability
         || b.item.issues - a.item.issues)
-      .slice(0, 120)
+      .slice(0, size)
       // Expose the ranking inputs so the client can re-sort without another
       // round trip, and so "best match" is not an unexplainable black box.
       .map(({ item, score, notability: note }) => ({ ...item, score, notability: note }));
@@ -650,6 +658,8 @@ app.get('/api/search', async (req, res, next) => {
       items,
       edition,
       medium,
+      publisher,
+      size,
       // Every format the classifier knows, so the filter is not limited to
       // whatever happens to be in this one result set.
       editions: EDITIONS.map(([name]) => name),
