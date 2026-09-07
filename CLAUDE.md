@@ -80,8 +80,13 @@ Verified against the live API; all of these have cost time already.
   back to the leading word when the full name misses.
 - **Volumes carry no team credits.** The Uncanny X-Men Omnibus reports 357
   characters and zero teams, so `catalogue_links` can never hold volume→team.
-  A team's books are derived from its line-up instead (`volumesForCharacters`),
-  and the UI says so.
+  A team's books can therefore only be found by its name, which is a weaker
+  claim than a saved credit and the page says so. **Do not fill a team shelf
+  from its members' credits.** That was tried: because ComicVine files every
+  name in a cast list as a credit, and an omnibus cast runs to hundreds,
+  Guardians of the Galaxy came out showing Essential X-Men and an Amazing
+  Spider-Man omnibus. A member's books belong on the member's page, which the
+  roster chips link to.
 - **Never cache an empty result from a seeded fetch.** A rate-limited pass
   resolves to `[]`, and `cached()` will happily store that for a month — which
   is how four publisher tiles lost their art. Throw instead, so the next open

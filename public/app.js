@@ -1183,7 +1183,8 @@ routes.thread = async (kind, id, encodedName) => {
       ${memberRoster(thread.historicMembers)}` : ''}
     ${hasLore ? `<div id="thread-lore" data-lore-no="${loreNo}"></div>` : ''}
     <div class="section-head"><span class="kicker no">${connectedNo}</span>
-      <h2>Connected books</h2><span class="kicker aside">Actual saved ComicVine credits</span></div>
+      <h2>Connected books</h2><span class="kicker aside">${kind === 'team'
+        ? 'Series found by this team’s name' : 'Actual saved ComicVine credits'}</span></div>
     <div id="thread-books">${skeletons(12)}</div>`;
 
   // This is intentionally after the profile paint: Wikidata enriches a
@@ -1201,21 +1202,21 @@ routes.thread = async (kind, id, encodedName) => {
   // where the saved ComicVine detail actually credits this creator/character.
   api(`/api/thread/${kind}/${id}/volumes`)
     .then(({ items, source }) => {
-      // Say plainly when the list is derived from the line-up rather than from
-      // credits on the team itself.
-      const note = source === 'team-series-and-line-up'
-        ? '<p class="sort-note kicker">This shelf alternates X-Men series found by title with books carrying saved credits for core members. The two paths are shown together, not conflated.</p>'
-        : source === 'team-series'
-          ? '<p class="sort-note kicker">ComicVine files no credits against this team, so these are series found by the team name.</p>'
-          : source === 'line-up'
-            ? '<p class="sort-note kicker">ComicVine files no credits against a team, so this shelf uses books carrying saved credits for core members.</p>'
-            : '';
+      // Say where the shelf came from, in this thread's own terms. ComicVine
+      // files no credits against a team, so a team's own books can only be
+      // found by its name -- a different kind of claim from a saved credit,
+      // and it has to read as one. A member's books live on the member's page;
+      // interleaving them here showed Essential X-Men to someone who had
+      // opened Guardians of the Galaxy.
+      const note = source === 'team-series'
+        ? `<p class="sort-note kicker">ComicVine files no credits against a team, so these are series found by the name ${esc(thread.name)}. Open a member above for their own credited books.</p>`
+        : '';
       const shown = applyContentFilter(items);
       document.querySelector('#thread-books').innerHTML = items.length
         ? `${note}${filterBar(items.length, shown.length)}<div class="grid">${shown.map(volumeCard).join('')}</div>`
         : filterActive()
         ? `${filterBar(0, 0)}<div class="empty">No ${esc(contentFilter().format === 'all' ? 'matching' : contentFilter().format.toLowerCase())} books here. <button class="secondary" data-clear-filter>Clear filter</button></div>`
-        : `<div class="empty">Panel has not saved any credited books for ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`;
+        : `<div class="empty">Panel has not saved any books under the name ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`;
     })
     .catch(() => { document.querySelector('#thread-books').innerHTML = '<div class="empty">Could not load saved relationships.</div>'; });
 };

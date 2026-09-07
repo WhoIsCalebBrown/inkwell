@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   cached, read as cacheRead, write as cacheWrite, clear as clearCache, stats as cacheStats,
-  findVolumes, rememberVolumes, findObjects, listObjects, publisherArt, volumesForCharacters,
+  findVolumes, rememberVolumes, findObjects, listObjects, publisherArt,
   decades, decadeVolumes, findObjectByName, findObjectsByName, findLinkedObjectIdByName, getObject, getVolume, rememberObjects, relatedVolumes,
   getMylarParts, rememberMylarParts, setMylarPartStatus, listMylarParts, forgetMylarSeries, getCover, rememberCover,
   enqueueEnrichment, claimNextEnrichment, completeEnrichment, postponeEnrichment, enrichmentStats,
@@ -1298,19 +1298,12 @@ app.get('/api/thread/:kind/:id/volumes', async (req, res) => {
   const library = await watchlist().catch(() => []);
   let volumes = relatedVolumes(kind, id, '', 48);
   let source = 'stored-links';
-  // A team has two complementary book paths. ComicVine has no team-level
-  // credit graph, so its *series* need a title lookup; its members' own books
-  // come from saved, explicit character credits. Keeping these paths separate
-  // prevents an X-Men page becoming a Wolverine page merely because Wolverine
-  // was explored first, without calling an X-Men title a Cyclops appearance.
+  // ComicVine has no team-level credit graph at all -- a volume record lists
+  // hundreds of characters and zero teams -- so a team's books can only be
+  // found by its name. That is a weaker claim than a saved credit, and the
+  // page says so rather than dressing it up as one.
   if (kind === 'team') {
     const team = getObject('team', id);
-    // The ComicVine record's `characters` list is uncurated (X-Men has 300
-    // entries), so it cannot define a team shelf. Wikidata's smaller, typed
-    // line-up does; ComicVine remains the source of the actual volume credits.
-    const loreMembers = await teamLineUp(team?.name);
-    const members = loreMembers.map((row) => row.id).filter(Boolean);
-    const memberVolumes = volumesForCharacters(members, 32);
     let teamSeries = team?.name ? findVolumes(team.name, 120) : [];
     // A team page is an explicit request to learn that team's actual series.
     // One cached search is deliberately bounded; unlike a title detail crawl,
@@ -1345,21 +1338,15 @@ app.get('/api/thread/:kind/:id/volumes', async (req, res) => {
       wakeEnrichment();
     }
 
-    // Alternate the two honest paths. This gives the group books equal visual
-    // weight while preserving a member's actual credited work for discovery.
-    const seen = new Set();
-    const mixed = [];
-    for (let index = 0; mixed.length < 48 && (index < matchingSeries.length || index < memberVolumes.length); index += 1) {
-      for (const item of [matchingSeries[index], memberVolumes[index]]) {
-        if (item && !seen.has(String(item.id)) && mixed.length < 48) {
-          seen.add(String(item.id)); mixed.push(item);
-        }
-      }
-    }
-    volumes = mixed;
-    if (matchingSeries.length && memberVolumes.length) source = 'team-series-and-line-up';
-    else if (matchingSeries.length) source = 'team-series';
-    else if (memberVolumes.length) source = 'line-up';
+    // A team shelf is the team's own books and nothing else. Books crediting
+    // an individual member used to be interleaved here, on the theory that a
+    // team is its line-up -- but it reads as noise: opening Guardians of the
+    // Galaxy showed Essential X-Men and an Amazing Spider-Man omnibus, because
+    // a member is credited somewhere inside each. Both facts are true and only
+    // one of them answers the question that was asked. A member's own books
+    // belong on that member's page, which the roster above links to.
+    volumes = matchingSeries;
+    source = matchingSeries.length ? 'team-series' : 'none';
   }
   res.json({
     items: volumes.map((item) => catalogueShape(item, new Set(library.map((x) => x.id)))),
