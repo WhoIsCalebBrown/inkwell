@@ -125,8 +125,36 @@ function relevance(item, query) {
   return score + 100 - Math.min(index, 99);
 }
 
+// Relevance ties constantly on a character search -- every one of these volumes
+// is literally called "Spider-Man" -- and the old tiebreak was issue count,
+// which favours long-running foreign reprint series over the canonical run.
+// Notability breaks the tie: who published it, and how substantial it is.
+function notability(item) {
+  const publisher = item.publisher?.name ?? item.publisher ?? '';
+  const issues = Number(item.count_of_issues) || 0;
+  // Diminishing returns, so a 160-issue reprint cannot outweigh the real house.
+  return weightOf(publisher) * 10 + Math.min(issues, 120);
+}
+
 function plainText(value = '') {
   return String(value).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Manga and Western comics answer different questions -- you browse manga by
+// creator and series, comics by character and publisher -- and ComicVine has no
+// medium field, so it is inferred from the publisher. Japanese houses plus the
+// English-language manga imprints.
+const MANGA_PUBLISHERS = [
+  'shueisha', 'kodansha', 'shogakukan', 'square enix', 'kadokawa', 'hakusensha',
+  'futabasha', 'houbunsha', 'akita shoten', 'coremagazine', 'asahi sonorama',
+  'jitsugyo no nihon sha', 'ascii media works', 'ichijinsha', 'media factory',
+  'viz', 'seven seas', 'yen press', 'dark horse manga', 'vertical', 'tokyopop',
+  'kodansha comics', 'denpa', 'ghost ship', 'j-novel', 'star fruit',
+];
+
+function mediumOf(publisher = '') {
+  const name = String(publisher || '').toLowerCase();
+  return MANGA_PUBLISHERS.some((p) => name.includes(p)) ? 'manga' : 'comic';
 }
 
 // Ordered most-specific first: a "Deluxe Edition Omnibus" is an omnibus.
@@ -154,6 +182,7 @@ function catalogueShape(item, watchedIds) {
   const edition = EDITIONS.find(([, pattern]) => pattern.test(titleText))?.[0] ?? 'Series';
   return {
     id: String(item.id), title: item.name, year: item.start_year, publisher: item.publisher?.name,
+    medium: mediumOf(item.publisher?.name),
     issues: Number(item.count_of_issues) || 0, cover: image.super_url || image.medium_url || image.small_url || null,
     description: plainText(item.description || item.deck), type: 'Volume', edition, imprint: null,
     url: item.site_detail_url, requested: watchedIds.has(String(item.id)),
@@ -334,6 +363,7 @@ app.get('/api/threads', async (req, res, next) => {
         name: x.name,
         deck: plainText(x.deck || '').slice(0, 160) || null,
         publisher: x.publisher?.name ?? null,
+        medium: mediumOf(x.publisher?.name),
         appearances: Number(x.count_of_issue_appearances) || 0,
         image: x.image?.medium_url ?? null,
       }))
@@ -351,6 +381,88 @@ app.get('/api/threads', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Browsing a publisher should show that publisher's characters. ComicVine's
+// publisher filter is ignored (asking for Marvel returns DC), and searching the
+// publisher's name just matches characters with it in their title -- which is
+// how DC heroes ended up filed under Marvel. So: seed with the names a reader
+// would recognise, then keep only the ones the API confirms belong to the house,
+// ranked by how much they actually appear.
+const PUBLISHER_SEEDS = {
+  Marvel: ['spider-man', 'x-men', 'avengers', 'iron man', 'captain america', 'hulk',
+           'thor', 'wolverine', 'fantastic four', 'daredevil', 'deadpool', 'black panther'],
+  'DC Comics': ['batman', 'superman', 'wonder woman', 'flash', 'green lantern', 'aquaman',
+                'joker', 'harley quinn', 'justice league', 'nightwing', 'swamp thing'],
+  'Image Comics': ['spawn', 'invincible', 'saga', 'the walking dead', 'witchblade', 'monstress'],
+  'Dark Horse Comics': ['hellboy', 'sin city', 'umbrella academy', 'the mask', 'concrete'],
+  'Boom! Studios': ['lumberjanes', 'something is killing the children', 'once and future'],
+};
+
+app.get('/api/publisher/:name/characters', async (req, res, next) => {
+  const name = String(req.params.name);
+  const seeds = PUBLISHER_SEEDS[name];
+  if (!seeds) return res.status(404).json({ error: `No seed list for "${name}".` });
+  try {
+    const items = await cached(`publisher:${normalise(name)}:characters`, 7 * 24 * 60 * 60_000, async () => {
+      const pages = await Promise.all(seeds.map((seed) =>
+        comicVine('search', {
+          query: seed, resources: 'character', limit: '30',
+          field_list: 'id,name,deck,image,publisher,count_of_issue_appearances',
+        }).catch(() => [])));
+      const seen = new Set();
+      return pages.flat()
+        .filter((x) => x && x.name && x.image?.medium_url)
+        // The house is confirmed from the record, never assumed from the query.
+        .filter((x) => String(x.publisher?.name || '').startsWith(name.split(' ')[0]))
+        .filter((x) => {
+          const key = normalise(x.name);
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => (Number(b.count_of_issue_appearances) || 0) - (Number(a.count_of_issue_appearances) || 0))
+        .slice(0, 24)
+        .map((x) => ({
+          id: String(x.id), kind: 'character', name: x.name,
+          publisher: x.publisher?.name ?? null,
+          appearances: Number(x.count_of_issue_appearances) || 0,
+          image: x.image?.medium_url ?? null,
+        }));
+    });
+    res.json({ publisher: name, items });
+  } catch (error) { next(error); }
+});
+
+// Publishers with their lines, logos and character counts. ComicVine's
+// publisher search matches loosely -- "Marvel" also returns Marvel Italia and
+// Marvel UK/Panini UK -- so the exact name wins, falling back to the first hit.
+app.get('/api/publishers', async (_req, res, next) => {
+  try {
+    const items = await cached('publishers:v1', 30 * 24 * 60 * 60_000, async () => {
+      const names = Object.keys(LINES);
+      // ComicVine's own spelling does not always match ours.
+      const CV_NAME = { 'Image Comics': 'Image' };
+      const found = await Promise.all(names.map((name) =>
+        comicVine('publishers', {
+          filter: `name:${CV_NAME[name] ?? name}`, limit: '10', field_list: 'id,name,image,deck',
+        }).catch(() => [])));
+      return names.map((name, index) => {
+        const rows = found[index] ?? [];
+        const CV_NAME = { 'Image Comics': 'Image' };
+        const wanted = CV_NAME[name] ?? name;
+        const exact = rows.find((r) => r.name === wanted) ?? rows[0] ?? null;
+        return {
+          name,
+          lines: LINES[name],
+          logo: exact?.image?.medium_url ?? null,
+          deck: plainText(exact?.deck || '').slice(0, 140) || null,
+          browsable: Boolean(PUBLISHER_SEEDS[name]),
+        };
+      });
+    });
+    res.json({ items });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/lines', (_req, res) => res.json({ lines: LINES }));
 
 // ComicVine caps a page at 100 and ignores every sort parameter, so breadth has
@@ -358,12 +470,30 @@ app.get('/api/lines', (_req, res) => res.json({ lines: LINES }));
 // 1,426 volumes -- reading only the first page hid nearly every omnibus.
 const SEARCH_PAGES = 3;
 
+// A format filter becomes extra ComicVine queries, because the API ranks
+// collected editions far below single issues. That only works with terms that
+// actually appear in titles: sending the label itself found nothing for
+// "Collected edition", since no book is called that.
+const FORMAT_QUERIES = {
+  Omnibus: ['omnibus'],
+  Compendium: ['compendium'],
+  Absolute: ['absolute edition'],
+  'Epic Collection': ['epic collection'],
+  Masterworks: ['masterworks'],
+  'Deluxe edition': ['deluxe edition', 'oversized'],
+  'Library edition': ['library edition', 'complete collection'],
+  Hardcover: ['hardcover'],
+  'Collected edition': ['tpb', 'trade paperback', 'graphic novel', 'collection'],
+  Annual: ['annual'],
+  'One-shot': ['one-shot', 'special', 'giant-size'],
+};
+
 async function searchVolumes(q, edition = '') {
   // ComicVine buries collected editions: query=spider-man returns exactly one
   // omnibus on page one. Asking for the format by name is the only way to
   // surface them, so a format filter becomes part of the query rather than a
   // filter applied to whatever the generic search happened to return.
-  const queries = edition ? [q, `${q} ${edition}`] : [q];
+  const queries = [q, ...(FORMAT_QUERIES[edition] ?? []).map((term) => `${q} ${term}`)];
   const pages = await Promise.all(queries.flatMap((query) =>
     Array.from({ length: SEARCH_PAGES }, (_, i) =>
       comicVine('search', { query, resources: 'volume', limit: '100', page: String(i + 1) })
@@ -374,6 +504,7 @@ async function searchVolumes(q, edition = '') {
 app.get('/api/search', async (req, res, next) => {
   const q = String(req.query.q || '').trim();
   const edition = EDITIONS.some(([name]) => name === req.query.edition) ? String(req.query.edition) : '';
+  const medium = ['comic', 'manga'].includes(req.query.medium) ? String(req.query.medium) : '';
   if (q.length < 2) return res.json({ items: [], editions: EDITIONS.map(([name]) => name) });
   try {
     const [raw, library] = await Promise.all([
@@ -387,13 +518,29 @@ app.get('/api/search', async (req, res, next) => {
       if (!previous || relevance(item, q) > relevance(previous, q)) deduped.set(key, item);
     }
     const items = [...deduped.values()]
-      .map((item) => ({ item: catalogueShape(item, watchedIds), score: relevance(item, q) }))
+      .map((item) => ({
+        item: catalogueShape(item, watchedIds),
+        score: relevance(item, q),
+        notability: notability(item),
+      }))
       .filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score || b.item.issues - a.item.issues)
-      .slice(0, 120).map(({ item }) => item);
+      // Narrow by format BEFORE trimming. Collected editions score below the
+      // plainly-titled series -- "The Amazing Spider-Man Omnibus" is a weaker
+      // text match for "spiderman" than "Spider-Man" is -- so trimming first
+      // discarded every one of them before the filter could see them.
+      .filter(({ item }) => !edition || item.edition === edition)
+      .filter(({ item }) => !medium || item.medium === medium)
+      .sort((a, b) => b.score - a.score
+        || b.notability - a.notability
+        || b.item.issues - a.item.issues)
+      .slice(0, 120)
+      // Expose the ranking inputs so the client can re-sort without another
+      // round trip, and so "best match" is not an unexplainable black box.
+      .map(({ item, score, notability: note }) => ({ ...item, score, notability: note }));
     res.json({
-      items: edition ? items.filter((x) => x.edition === edition) : items,
+      items,
       edition,
+      medium,
       // Every format the classifier knows, so the filter is not limited to
       // whatever happens to be in this one result set.
       editions: EDITIONS.map(([name]) => name),

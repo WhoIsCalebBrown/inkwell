@@ -114,7 +114,8 @@ function volumeCard(item) {
       ${coverHtml(item, { flag: owned ? 'On shelf' : '' })}
     </button>
     <div class="meta">
-      ${item.edition ? `<span class="kicker" style="color:${item.edition === 'Omnibus' ? 'var(--accent)' : 'var(--muted)'}">${esc(item.edition)}</span>` : ''}
+      <span class="kicker" style="color:${item.edition === 'Omnibus' ? 'var(--accent)' : 'var(--muted)'}">${
+        esc([item.medium === 'manga' ? 'Manga' : null, item.edition].filter(Boolean).join(' · '))}</span>
       <h3>${esc(item.title)}</h3>
       <span class="sub">${[item.publisher, item.year, item.issues ? plural(item.issues, 'issue') : null].filter(Boolean).map(esc).join(' · ')}</span>
       <button class="act ${owned ? 'owned' : ''}" data-request="${esc(item.id)}" ${owned ? 'disabled' : ''}>
@@ -175,23 +176,46 @@ routes.browse = async () => {
   view.innerHTML = `<section class="lede">
       <span class="kicker" style="color:var(--accent)">Browse</span>
       <h1>Start with a house<br />you already <em>trust</em>.</h1>
-      <p>Publishers lead to lines, lines to the characters, creators and events
-         inside them. Search above to jump straight to a thread.</p>
+      <p>Each publisher leads to its lines and its characters. Search above to
+         jump straight to a thread.</p>
     </section>
     <div id="houses">${skeletons(3, '1fr')}</div>`;
 
-  const { lines } = await api('/api/lines');
+  const { items } = await api('/api/publishers');
   document.querySelector('#houses').innerHTML = `<div class="index">${
-    Object.entries(lines).map(([house, imprints]) => `
+    items.map((house) => `
       <div class="house">
-        <div class="swatch" style="background:${tintFor(house)}"></div>
-        <div>
-          <h2 class="disp">${esc(house)}</h2>
-          <div class="chips">${imprints.map((line) => `
-            <button class="chip kicker" data-search="${esc(`${house} ${line}`)}">${esc(line)}</button>`).join('')}</div>
+        <div class="swatch${house.logo ? ' logo' : ''}" style="${house.logo ? '' : `background:${tintFor(house.name)}`}">
+          ${house.logo ? `<img src="${esc(house.logo)}" alt="${esc(house.name)}" loading="lazy" />` : ''}
         </div>
-        <button class="kicker" data-search="${esc(house)}" style="white-space:nowrap">All →</button>
+        <div>
+          <h2 class="disp">${esc(house.name)}</h2>
+          <div class="chips">${house.lines.map((line) => `
+            <button class="chip kicker" data-search="${esc(`${house.name} ${line}`)}">${esc(line)}</button>`).join('')}</div>
+          ${house.browsable ? `<div id="chars-${esc(house.name.replace(/\W+/g, ''))}" class="pub-chars"></div>` : ''}
+        </div>
+        <button class="kicker" data-search="${esc(house.name)}" style="white-space:nowrap">Books →</button>
       </div>`).join('')}</div>`;
+
+  // Each publisher's own characters, confirmed against the record rather than
+  // guessed from the search term — searching "Marvel" used to return DC heroes.
+  for (const house of items.filter((h) => h.browsable)) {
+    const slot = document.querySelector(`#chars-${house.name.replace(/\W+/g, '')}`);
+    if (!slot) continue;
+    slot.innerHTML = `<div class="rail">${skeletonCard.repeat(6)}</div>`;
+    api(`/api/publisher/${encodeURIComponent(house.name)}/characters`)
+      .then(({ items: chars }) => {
+        slot.innerHTML = chars.length ? `<div class="rail">${chars.slice(0, 14).map((c) => `
+          <article class="card">
+            <button data-thread="character/${esc(c.id)}" style="all:unset;cursor:pointer">
+              ${coverHtml({ id: c.id, name: c.name, image: c.image }, { ratio: '1 / 1' })}
+            </button>
+            <div class="meta"><h3>${esc(c.name)}</h3>
+              <span class="sub">${c.appearances.toLocaleString()} appearances</span></div>
+          </article>`).join('')}</div>` : '';
+      })
+      .catch(() => { slot.innerHTML = ''; });
+  }
 };
 
 /* ---------------- search ---------------- */
@@ -227,7 +251,7 @@ routes.search = async (encoded) => {
   try {
     await loadShelf().catch(() => {});
     state.query = query;
-    state.filters = { format: 'all', publisher: 'all', sort: 'relevance' };
+    state.filters = { format: 'all', medium: 'all', publisher: 'all', sort: 'relevance' };
     books.innerHTML = `<div class="section-head"><h2>Books</h2>
         <span class="kicker aside" id="count"></span></div>
       <div class="filters" id="filters"></div>
@@ -245,8 +269,10 @@ async function loadBooks() {
   const results = document.querySelector('#results');
   results.innerHTML = skeletons(10);
   const format = state.filters.format;
+  const medium = state.filters.medium;
   const url = `/api/search?q=${encodeURIComponent(state.query)}`
-    + (format && format !== 'all' ? `&edition=${encodeURIComponent(format)}` : '');
+    + (format && format !== 'all' ? `&edition=${encodeURIComponent(format)}` : '')
+    + (medium && medium !== 'all' ? `&medium=${encodeURIComponent(medium)}` : '');
   try {
     const data = await api(url);
     state.results = data.items;
@@ -269,15 +295,27 @@ function renderFilters() {
     <select data-filter="${key}">${options.map(([v, t]) =>
       `<option value="${esc(v)}"${state.filters[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
   document.querySelector('#filters').innerHTML =
+    select('medium', 'Kind', [['all', 'Comics & manga'], ['comic', 'Comics only'], ['manga', 'Manga only']]) +
     select('format', 'Format', [['all', 'All formats'], ...editions.map((e) => [e, e])]) +
     select('publisher', 'Publisher', [['all', 'All publishers'], ...publishers.map((p) => [p, p])]) +
-    select('sort', 'Sort', [['relevance', 'Best match'], ['newest', 'Newest'], ['issues', 'Most issues'], ['title', 'A–Z']]);
+    select('sort', 'Sort', [
+      ['relevance', 'Best match'],
+      ['notable', 'Most notable'],
+      ['newest', 'Newest'],
+      ['issues', 'Most issues'],
+      ['title', 'A–Z'],
+    ]);
 }
 
 function renderResults() {
   const { publisher, sort } = state.filters;
   // Format is applied server-side by loadBooks(); only publisher narrows here.
   let list = state.results.filter((x) => publisher === 'all' || x.publisher === publisher);
+  // "Best match" is text relevance first, then notability — how well known the
+  // publisher is and how substantial the book is. Without that tiebreak a search
+  // for a character returns long-running foreign reprints ahead of the real run,
+  // because they all match the name exactly and reprints have more issues.
+  if (sort === 'notable') list = [...list].sort((a, b) => (b.notability || 0) - (a.notability || 0));
   if (sort === 'newest') list = [...list].sort((a, b) => (b.year || 0) - (a.year || 0));
   if (sort === 'issues') list = [...list].sort((a, b) => b.issues - a.issues);
   if (sort === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title));
@@ -478,7 +516,7 @@ document.addEventListener('change', (event) => {
   const filter = event.target.closest('[data-filter]');
   if (!filter) return;
   state.filters[filter.dataset.filter] = filter.value;
-  if (filter.dataset.filter === 'format') loadBooks();
+  if (filter.dataset.filter === 'format' || filter.dataset.filter === 'medium') loadBooks();
   else renderResults();
 });
 
@@ -490,4 +528,7 @@ document.querySelector('#search-form').addEventListener('submit', (event) => {
 
 sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.close(); });
 window.addEventListener('hashchange', render);
+// The shelf count lives in the masthead on every page, so it is loaded once at
+// boot rather than only by the routes that happen to need the list.
+loadShelf().catch(() => {});
 render();

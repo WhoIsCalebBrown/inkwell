@@ -135,6 +135,10 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 .house { display: grid; grid-template-columns: 44px 1fr auto; gap: 24px; align-items: start;
   border-bottom: 1px solid var(--rule); padding: 26px 0; }
 .house .swatch { width: 40px; height: 40px; }
+.house .swatch.logo { background: #f4efe2; display: grid; place-items: center; padding: 3px; }
+.house .swatch.logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pub-chars { margin-top: 16px; }
+.pub-chars .rail { grid-auto-columns: 108px; gap: 14px; }
 .house h2 { font-family: var(--disp); font-size: clamp(28px, 4vw, 44px); font-weight: 400; margin: 0 0 12px; letter-spacing: -0.02em; }
 
 /* ---------- dialog ---------- */
