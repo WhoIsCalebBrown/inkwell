@@ -1280,57 +1280,54 @@ function sinceLabel(text) {
   return hours < 36 ? `${hours} hr` : `${Math.round(hours / 24)} days`;
 }
 
-function downloadsHtml(data) {
-  const { items, counts } = data;
-  const active = items.filter((item) => item.state === 'Downloading');
-  const waiting = items.filter((item) => item.state === 'Queued');
-  const failed = items.filter((item) => item.state === 'Failed');
-  if (!items.length) return '';
-  const held = active.map((item) => Date.now() - (mylarTime(item.changed)?.getTime() ?? Date.now()));
-  // Waiting with nothing running is the wedge; a single file held for hours is
-  // the other half of the same failure.
-  const stalled = (waiting.length && !active.length) || held.some((ms) => ms > STALL_AFTER_MS);
-
-  const row = (item) => `<div class="download-row${item.state === 'Downloading' ? ' running' : ''}">
-    <div><b>${esc(item.title)}</b>
-      <small>${esc([item.size, item.source && `via ${item.source}`].filter(Boolean).join(' · '))}</small></div>
-    <div class="download-state">
-      <span class="kicker state${item.state === 'Completed' ? ' owned' : item.state === 'Failed' ? ' attention' : ''}">${esc(item.label)}</span>
-      <small>${esc(item.changed ? `${sinceLabel(item.changed)} in this state` : '')}</small>
-    </div>
-    ${item.state === 'Completed' ? '' : `<div class="download-actions">
-      <button class="secondary" data-retry-download="${esc(item.id)}">Restart</button>
-      <button class="secondary quiet" data-abort-download="${esc(item.id)}">Stop</button></div>`}
-  </div>`;
-
-  return `<div class="section-head"><span class="kicker no">01</span><h2>Downloads</h2>
-      <span class="kicker aside">${
-        active.length ? `${active.length} downloading` : 'Nothing downloading'} · ${
-        waiting.length} waiting · ${counts.done} finished</span>
-      <button class="secondary" data-restart-queue>Restart the queue</button></div>
-    ${stalled ? `<p class="download-warning">Nothing has moved${
-      active.length ? ` for ${sinceLabel(active[0].changed)}` : waiting.length ? ' — files are waiting with none running' : ''
-      }. Mylar hands the queue to one worker at a time, and a restart of Mylar leaves it holding a file it will never finish. Restarting the queue hands every waiting file back to it.</p>` : ''}
-    <div class="download-list">${[...active, ...failed, ...waiting].map(row).join('')
-      || '<div class="empty">Nothing in Mylar’s download queue.</div>'}</div>`;
+function queueSummary(queue) {
+  const { counts } = queue;
+  return `${counts.downloading ? `${counts.downloading} downloading` : 'Nothing downloading'} · ${
+    counts.waiting} waiting · ${counts.done} finished`;
 }
 
-// Refreshes itself only while there is something to watch, and stops the
-// moment the section leaves the page.
-async function downloadsPanel(slot) {
+// Said once, above the list, rather than on every card that is waiting.
+function queueWarning(queue) {
+  const active = queue.items.filter((item) => item.state === 'Downloading');
+  const waiting = queue.items.filter((item) => item.state === 'Queued');
+  if (!queue.items.length) return '';
+  const held = active.map((item) => Date.now() - (mylarTime(item.changed)?.getTime() ?? Date.now()));
+  const stalled = (waiting.length && !active.length) || held.some((ms) => ms > STALL_AFTER_MS);
+  if (!stalled) return '';
+  return `<p class="download-warning">Nothing has moved${
+    active.length ? ` for ${sinceLabel(active[0].changed)}` : ' — files are waiting with none running'
+    }. Mylar hands the queue to one worker at a time, and a restart of Mylar leaves it holding a file it will never finish.
+    <button class="secondary" data-restart-queue>Restart the queue</button></p>`;
+}
+
+// Only the queue moves on its own, so only the queue is re-read. Cards are
+// patched in place: a full re-render would collapse an unfurled parts list and
+// throw away the titles ComicVine filled in after paint.
+async function watchQueue(signature) {
   for (;;) {
-    if (!slot.isConnected) return;
-    let data;
-    try { data = await api('/api/downloads'); } catch {
-      // Mylar's web UI is a separate port from its API; if only that is down,
-      // the requests below it are still worth showing.
-      slot.innerHTML = '';
+    await new Promise((resolve) => { setTimeout(resolve, DOWNLOAD_POLL_MS); });
+    const center = document.querySelector('.request-center');
+    if (!center || !center.isConnected) return;
+    let queue;
+    try { queue = await api('/api/downloads'); } catch { return; }
+    if (!center.isConnected) return;
+    const entries = requestEntries({ shelf: [], activity: { items: [] }, queue });
+    // A file for a title that is not on screen means the page itself is out of
+    // date -- a request made on another device, say. Rebuild rather than
+    // pretend, then stop: the new render starts its own watcher.
+    if (entries.some((entry) => !document.querySelector(`[data-entry="${CSS.escape(entry.id)}"]`))) {
+      render();
       return;
     }
-    if (!slot.isConnected) return;
-    slot.innerHTML = downloadsHtml(data);
-    if (!data.counts.downloading && !data.counts.waiting) return;
-    await new Promise((resolve) => { setTimeout(resolve, DOWNLOAD_POLL_MS); });
+    for (const slot of document.querySelectorAll('[data-download-for]')) {
+      const entry = entries.find((item) => item.id === slot.dataset.downloadFor);
+      slot.innerHTML = entry ? downloadLine(entry) : '';
+    }
+    const summary = document.querySelector('#queue-summary');
+    if (summary) summary.textContent = queueSummary(queue);
+    const warning = document.querySelector('#queue-warning');
+    if (warning) warning.innerHTML = queueWarning(queue);
+    if (!queue.counts.downloading && !queue.counts.waiting) return;
   }
 }
 
@@ -1344,10 +1341,9 @@ async function restartDownloads(id, button) {
       body: JSON.stringify(id ? { id } : {}),
     });
     toast(message || 'Mylar restarted the queue.');
-    const slot = document.querySelector('#downloads');
     // Mylar picks the queue up a moment after answering; re-read rather than
-    // leaving the row that was just restarted still reading "waiting".
-    if (slot) setTimeout(() => downloadsPanel(slot), 2500);
+    // leaving the card that was just restarted still reading "waiting".
+    setTimeout(() => render(), 2500);
   } catch (error) {
     toast(error.message, 'error');
   } finally {
@@ -1470,8 +1466,7 @@ async function abortDownload(id, button) {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
     });
     toast(message || 'Mylar stopped that download.');
-    const slot = document.querySelector('#downloads');
-    if (slot) setTimeout(() => downloadsPanel(slot), 1500);
+    setTimeout(() => render(), 1500);
   } catch (error) {
     button.disabled = false;
     button.textContent = 'Stop';
@@ -1479,18 +1474,143 @@ async function abortDownload(id, button) {
   }
 }
 
+// One book, one entry. This page used to be three lists of the same books --
+// a text-only download queue, a covers-and-parts request list, and a shelf
+// index underneath -- so a single omnibus could appear three times, twice
+// without its cover, and a reader had to work out that they were the same
+// thing. Everything Panel knows about a title now lands on one card: what
+// Mylar is doing with it, which parts were asked for, and where to read it.
+const requestState = (status) => ({
+  Wanted: 'Waiting on a search', Snatched: 'Handed to the downloader', Downloaded: 'Downloaded',
+  Archived: 'In library', Failed: 'Needs attention', Skipped: 'Not requested',
+}[status] || status);
+
+// Ordering is by what needs the reader's attention, not by name: something
+// downloading now is worth more than the twelfth omnibus that arrived last week.
+const ENTRY_RANK = { downloading: 0, attention: 1, waiting: 2, queued: 3, arrived: 4, library: 5, idle: 6 };
+
+function entryStandingFrom(entry) {
+  if (entry.download?.state === 'Downloading') return 'downloading';
+  if (entry.parts.some((part) => part.status === 'Failed')) return 'attention';
+  if (entry.parts.some((part) => part.status === 'Wanted')) return 'waiting';
+  if (entry.download) return 'queued';
+  if (entry.parts.some((part) => part.status === 'Snatched')) return 'arrived';
+  if (entry.inLibrary) return 'library';
+  return 'idle';
+}
+
+// Everything Panel holds about a title, keyed by the id Mylar, ComicVine and
+// the download queue all happen to share.
+function requestEntries({ shelf, activity, queue }) {
+  const byId = new Map();
+  const entry = (id, seed) => {
+    if (!byId.has(id)) {
+      byId.set(id, { id, title: '', publisher: null, year: null, cover: null,
+        inLibrary: false, books: 0, readUrl: null, parts: [], download: null, waitingFiles: 0 });
+    }
+    const found = byId.get(id);
+    for (const [key, value] of Object.entries(seed)) {
+      if (value != null && value !== '' && (found[key] == null || found[key] === '' || found[key] === false)) found[key] = value;
+    }
+    return found;
+  };
+
+  for (const item of shelf) {
+    entry(String(item.id), {
+      title: item.title, publisher: item.publisher, year: item.year, cover: item.cover,
+      inLibrary: item.inLibrary, books: item.books, readUrl: item.readUrl,
+    });
+  }
+  for (const part of activity.items) {
+    entry(String(part.comicId), {
+      title: part.series, publisher: part.publisher, year: part.year, readUrl: part.readUrl,
+    }).parts.push(part);
+  }
+  for (const file of queue?.items ?? []) {
+    if (file.state === 'Completed') continue;
+    const found = entry(String(file.comicId), { title: file.title });
+    // The running file is the one worth naming; the rest are a count, because
+    // a card listing four waiting files is a queue again.
+    if (file.state === 'Downloading' && !found.download) found.download = file;
+    else found.waitingFiles += 1;
+  }
+
+  const entries = [...byId.values()];
+  for (const found of entries) {
+    found.parts.sort((a, b) => Number(a.number) - Number(b.number));
+    found.standing = entryStandingFrom(found);
+  }
+  return entries.sort((a, b) => (ENTRY_RANK[a.standing] - ENTRY_RANK[b.standing])
+    || a.title.localeCompare(b.title));
+}
+
+// The line that says what is happening to this book right now. It is the only
+// place a download appears, so it carries the file's own actions with it.
+function downloadLine(entry) {
+  const file = entry.download;
+  const waiting = entry.waitingFiles
+    ? `<span class="kicker">${plural(entry.waitingFiles, 'more file')} in the queue</span>` : '';
+  if (!file) return waiting ? `<div class="entry-download">${waiting}</div>` : '';
+  return `<div class="entry-download${file.state === 'Downloading' ? ' running' : ''}">
+    <span class="kicker">${esc(file.label)}${file.size ? ` · ${esc(file.size)}` : ''}${
+      file.source ? ` · via ${esc(file.source)}` : ''}${
+      file.changed ? ` · ${esc(sinceLabel(file.changed))} in this state` : ''}</span>
+    <span class="entry-download-actions">
+      <button class="secondary" data-retry-download="${esc(file.id)}">Restart</button>
+      <button class="secondary quiet" data-abort-download="${esc(file.id)}">Stop</button>
+    </span>${waiting}
+  </div>`;
+}
+
+function requestCard(entry) {
+  const stateLabel = entry.download?.state === 'Downloading' ? 'Downloading'
+    : entry.parts.length ? requestState(entry.parts[0].status)
+    : entry.inLibrary ? 'In library'
+    : entry.download ? 'Waiting its turn' : 'Watching';
+  const owned = entry.inLibrary || entry.parts.some((part) => ['Downloaded', 'Archived'].includes(part.status));
+  return `<article class="request-series" data-entry="${esc(entry.id)}">
+    <div class="request-series-head">
+      <button class="request-series-cover" data-volume="${esc(entry.id)}" aria-label="${esc(entry.title)}">
+        ${coverHtml({ id: entry.id, title: entry.title, cover: entry.cover || `/api/cover/${encodeURIComponent(entry.id)}` })}
+      </button>
+      <div>
+        <span class="kicker state ${owned ? 'owned' : entry.standing === 'attention' ? 'attention' : ''}">${esc(stateLabel)}${
+          entry.books ? ` · ${plural(entry.books, 'book')}` : ''}</span>
+        <h3>${esc(entry.title)}</h3>
+        <p>${esc([entry.publisher, entry.year].filter(Boolean).join(' · '))}</p>
+      </div>
+      <div class="request-series-actions">
+        ${entry.readUrl ? `<a class="secondary" href="${esc(entry.readUrl)}" target="_blank" rel="noreferrer">Read</a>` : ''}
+        <button class="secondary" data-request="${esc(entry.id)}">Manage parts</button>
+        <button class="secondary quiet" data-stop-series="${esc(entry.id)}" data-series-name="${esc(entry.title)}">Stop tracking</button>
+      </div>
+    </div>
+    <div class="entry-download-slot" data-download-for="${esc(entry.id)}">${downloadLine(entry)}</div>
+    ${entry.parts.length ? `<div class="request-parts" data-parts-for="${esc(entry.id)}">${entry.parts.map((part, index) => {
+      const canRetry = !['Downloaded', 'Archived', 'Snatched'].includes(part.status);
+      return `<div class="request-part${index >= REQUEST_PARTS_SHOWN ? ' extra' : ''}"${index >= REQUEST_PARTS_SHOWN ? ' hidden' : ''}>
+        <div><span class="kicker">${esc(part.number || '—')}</span>
+          <b data-part-title="${esc(part.number || '')}">${esc(part.name || `Part ${part.number}`)}</b>
+          <small data-part-blurb="${esc(part.number || '')}"></small>
+          ${part.wantedSince ? `<small class="waiting-since">Asked for ${esc(part.wantedSince)}</small>` : ''}</div>
+        <div class="request-part-action"><span class="kicker state ${['Downloaded', 'Archived'].includes(part.status) ? 'owned' : part.status === 'Failed' ? 'attention' : ''}">${esc(requestState(part.status))}</span>
+          ${canRetry ? `<button class="secondary" data-retry-part="${esc(part.comicId)}/${esc(part.issueId)}">${part.status === 'Failed' ? 'Retry now' : 'Search again'}</button>` : ''}
+          ${part.status === 'Wanted' ? `<button class="secondary quiet" data-cancel-part="${esc(part.comicId)}/${esc(part.issueId)}">Cancel</button>` : ''}</div></div>`;
+    }).join('')}</div>` : ''}
+    ${entry.parts.length > REQUEST_PARTS_SHOWN ? `<button class="request-unfurl kicker" data-unfurl="${esc(entry.id)}">
+      Show all ${entry.parts.length} parts ↓</button>` : ''}
+  </article>`;
+}
+
 routes.library = async () => {
   view.innerHTML = `<section class="lede" style="border:0"><span class="kicker" style="color:var(--accent)">Your shelf</span>
     <h1>What you asked for,<br />and what <em>arrived</em>.</h1></section>${skeletons(1, '1fr')}`;
-  const [{ items, counts, komga }, activity, events] = await Promise.all([
-    loadShelf(), api('/api/requests'), api('/api/events').catch(() => ({ items: [] })),
+  const [{ items, counts, komga }, activity, events, queue] = await Promise.all([
+    loadShelf(), api('/api/requests'),
+    api('/api/events').catch(() => ({ items: [] })),
+    api('/api/downloads').catch(() => ({ items: [], counts: { downloading: 0, waiting: 0, done: 0, failed: 0 } })),
   ]);
-  const requestState = (status) => ({ Wanted: 'Queued', Snatched: 'Snatched', Downloaded: 'Downloaded', Archived: 'In library', Failed: 'Needs attention', Skipped: 'Not requested' }[status] || status);
-  const groups = [...activity.items.reduce((map, part) => {
-    const key = part.comicId;
-    if (!map.has(key)) map.set(key, { comicId: key, series: part.series, publisher: part.publisher, year: part.year, readUrl: part.readUrl || null, parts: [] });
-    map.get(key).parts.push(part); return map;
-  }, new Map()).values()];
+  const entries = requestEntries({ shelf: items, activity, queue });
   view.innerHTML = `
     ${lede('library', {
       kicker: 'Your shelf',
@@ -1501,72 +1621,24 @@ routes.library = async () => {
       <div><span class="kicker">In library ${info('in library')}</span><b class="disp" style="color:var(--shelf)">${counts.inLibrary}</b></div>
       <div><span class="kicker">Still searching ${info('searching')}</span><b class="disp" style="color:var(--accent)">${counts.searching}</b></div>
     </div>
-    ${/* Filled after paint: the queue lives behind Mylar's web UI, and the
-          requests below must never wait on it. */ ''}
-    <section id="downloads" class="download-panel"></section>
-    ${activity.items.length ? `<section class="request-activity">
-      <div class="section-head"><span class="kicker no">02</span><h2>Requests</h2>
-        <span class="kicker aside">${activity.counts.snatched} snatched · ${activity.counts.wanted} queued · ${activity.counts.failed} need attention</span>
+    <section class="request-activity">
+      <div class="section-head"><span class="kicker no">01</span><h2>Requests</h2>
+        <span class="kicker aside" id="queue-summary">${queueSummary(queue)}</span>
         <button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>
-      <p class="request-explainer">Panel queues only the parts you selected. Mylar searches your indexers; <em>Snatched</em> means it reached the download client, and Komga marks it readable after import.</p>
+      <p class="request-explainer">Everything you have asked Mylar for. A book stays here from the search, through the download, to the shelf — <em>Read</em> opens it in Komga.</p>
       ${searchStateHtml(activity)}
-      <div class="request-center">${groups.map((group) => `<article class="request-series">
-        ${/* Mylar's comic id is the ComicVine volume id, so the cover Panel
-               already has on disk is addressable. coverHtml falls back to the
-               title tile if there is no art. */ ''}
-        <div class="request-series-head">
-          <button class="request-series-cover" data-volume="${esc(group.comicId)}" aria-label="${esc(group.series)}">
-            ${coverHtml({ id: group.comicId, title: group.series, cover: `/api/cover/${encodeURIComponent(group.comicId)}` })}
-          </button>
-          <div><span class="kicker">Mylar watchlist</span><h3>${esc(group.series)}</h3><p>${esc([group.publisher, group.year].filter(Boolean).join(' · '))}</p></div>
-          <div class="request-series-actions">
-            ${group.readUrl ? `<a class="secondary" href="${esc(group.readUrl)}" target="_blank" rel="noreferrer">Read</a>` : ''}
-            <button class="secondary" data-request="${esc(group.comicId)}">Manage parts</button>
-            <button class="secondary quiet" data-stop-series="${esc(group.comicId)}" data-series-name="${esc(group.series)}">Stop tracking</button>
-          </div></div>
-        ${/* A watchlisted run can carry a hundred parts. Show a readable
-               handful and let the reader unfurl the rest. */ ''}
-        <div class="request-parts" data-parts-for="${esc(group.comicId)}">${group.parts.map((part, index) => {
-          const canRetry = !['Downloaded', 'Archived', 'Snatched'].includes(part.status);
-          return `<div class="request-part${index >= REQUEST_PARTS_SHOWN ? ' extra' : ''}"${index >= REQUEST_PARTS_SHOWN ? ' hidden' : ''}>
-            <div><span class="kicker">${esc(part.number || '—')}</span>
-              <b data-part-title="${esc(part.number || '')}">${esc(part.name || `Part ${part.number}`)}</b>
-              <small data-part-blurb="${esc(part.number || '')}"></small>
-              ${part.wantedSince ? `<small class="waiting-since">Asked for ${esc(part.wantedSince)}</small>` : ''}</div>
-            <div class="request-part-action"><span class="kicker state ${['Downloaded', 'Archived'].includes(part.status) ? 'owned' : part.status === 'Failed' ? 'attention' : ''}">${esc(requestState(part.status))}</span>
-              ${canRetry ? `<button class="secondary" data-retry-part="${esc(part.comicId)}/${esc(part.issueId)}">${part.status === 'Failed' ? 'Retry now' : 'Search again'}</button>` : ''}
-              ${part.status === 'Wanted' ? `<button class="secondary quiet" data-cancel-part="${esc(part.comicId)}/${esc(part.issueId)}">Cancel</button>` : ''}</div></div>`;
-        }).join('')}</div>
-        ${group.parts.length > REQUEST_PARTS_SHOWN ? `<button class="request-unfurl kicker" data-unfurl="${esc(group.comicId)}">
-          Show all ${group.parts.length} parts ↓</button>` : ''}
-      </article>`).join('')}</div>
-    </section>` : `<section class="request-activity">
-      <div class="section-head"><span class="kicker no">02</span><h2>Requests</h2>
-        <button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>
-      ${/* The search state belongs here too, and this is where it matters most:
-             Mylar can be waiting on parts this device has never listed. */ ''}
-      ${searchStateHtml(activity)}
-      <div class="empty">Choose a specific issue or volume and it will appear here with Mylar’s progress.
-        ${activity.search?.waiting ? 'Mylar is already waiting on parts requested elsewhere — <b>Refresh from Mylar</b> brings them in.' : ''}</div></section>`}
+      <div id="queue-warning">${queueWarning(queue)}</div>
+      <div class="request-center">${entries.length
+        ? entries.map(requestCard).join('')
+        : `<div class="empty">Choose a specific issue or volume and it will appear here with Mylar’s progress.</div>`}</div>
+    </section>
     ${activityHtml(events)}
-    ${komga ? '' : '<p class="kicker" style="color:var(--accent);padding-bottom:14px">Komga is not connected — every title will read as searching.</p>'}
-    <div class="index">${items.map((item, i) => `
-      <div class="row">
-        <span class="kicker" style="color:var(--faint)">${String(i + 1).padStart(2, '0')}</span>
-        <div class="thumb">${coverHtml(item)}</div>
-        <div>
-          <div class="title">${esc(item.title)}</div>
-          <span class="kicker">${esc(item.publisher || '')}${item.year ? ` · ${esc(item.year)}` : ''}</span>
-        </div>
-        <span class="kicker state ${item.inLibrary ? 'owned' : ''}">${esc(item.state)}${
-          item.books ? ` · ${item.books}` : ''}</span>
-        ${item.readUrl ? `<a class="kicker read-link" href="${esc(item.readUrl)}" target="_blank" rel="noreferrer">Read ↗</a>` : ''}
-      </div>`).join('')}</div>`;
+    ${komga ? '' : '<p class="kicker" style="color:var(--accent);padding-bottom:14px">Komga is not connected — every title will read as searching.</p>'}`;
 
   // After paint, never before it.
-  if (groups.length) hydrateRequestParts(groups.map((group) => group.comicId));
-  const queue = document.querySelector('#downloads');
-  if (queue) downloadsPanel(queue);
+  const withParts = entries.filter((entry) => entry.parts.length).map((entry) => entry.id);
+  if (withParts.length) hydrateRequestParts(withParts);
+  watchQueue(entries.map((entry) => entry.id).join(','));
 };
 
 /* ---------------- settings ---------------- */
@@ -2088,6 +2160,27 @@ let hoverCard = null;
 let hoverBounds = null;
 let hoverPoint = null;
 let hoverQueued = false;
+
+// A tooltip is 290px of absolutely positioned text hanging off a 17px button.
+// Anchored left it runs past the right edge on an iPad, and the page now clips
+// rather than scrolls -- so the words would simply be gone. Measure once when
+// the pointer or focus arrives, then remember the answer on the element: this
+// is not in a pointermove path, and the result cannot change until layout does.
+function placeTip(el) {
+  if (!el || el.dataset.tipPlaced === String(window.innerWidth)) return;
+  el.dataset.tipPlaced = String(window.innerWidth);
+  const { left } = el.getBoundingClientRect();
+  // 290px is the tooltip's max-width; leave a gutter so it never kisses the edge.
+  el.classList.toggle('right', left + 306 > document.documentElement.clientWidth);
+}
+document.addEventListener('pointerover', (event) => {
+  const tip = event.target.closest?.('.info, .term');
+  if (tip) placeTip(tip);
+}, { passive: true });
+document.addEventListener('focusin', (event) => {
+  const tip = event.target.closest?.('.info, .term');
+  if (tip) placeTip(tip);
+});
 
 function paintHover() {
   hoverQueued = false;

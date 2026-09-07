@@ -30,6 +30,14 @@ body {
   padding: 0 var(--gutter) 96px;
   overflow-x: hidden;
 }
+/* A hidden tooltip still has a box. `visibility: hidden` keeps it in layout so
+   it can transition, and an absolutely positioned box 290px wide anchored near
+   the right edge extends the *page's* scrollable width -- which is why an iPad
+   could scroll a couple of hundred pixels into black. body's overflow-x does
+   not settle it when the root element is the scroller, and `clip` rather than
+   `hidden` avoids making the root a scroll container of its own. Rails keep
+   their own overflow-x and are unaffected. */
+html { overflow-x: clip; }
 /* A quiet, static film grain — closer to Zen's material feel than a visible
    paper pattern. It is deliberately above the interface but never interactive. */
 body::before { content: ''; position: fixed; inset: 0; z-index: 100; pointer-events: none; opacity: .052;
@@ -254,13 +262,15 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 .request-explainer { max-width: 76ch; margin: -8px 0 22px; color: var(--body); font-size: 13px; line-height: 1.6; }
 .request-center { display: grid; gap: 16px; }
 .request-series { border: 1px solid var(--rule); background: var(--surface); }
-.request-series-head { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 20px; align-items: start; padding: 20px; border-bottom: 1px solid var(--rule); }
+.request-series-head { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 20px; align-items: start; padding: 20px; }
+.request-series-head h3 { margin: 6px 0 0; }
+.request-series-head p { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .request-series-cover { all: unset; cursor: pointer; display: block; }
 .request-series-cover .cover { width: 58px; }
 .request-series-cover .fallback { font-size: 11px; padding: 6px; }
 .request-series-head h3 { margin: 7px 0 3px; font: 400 clamp(25px, 3vw, 35px)/1 var(--disp); }
 .request-series-head p { margin: 0; color: var(--muted); font-size: 12px; }
-.request-parts { padding: 0 20px; }
+.request-parts { padding: 0 20px; border-top: 1px solid var(--rule); }
 .request-part { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 15px 0; border-bottom: 1px solid var(--rule); }
 .request-part:last-child { border-bottom: 0; }
 .request-part > div:first-child { display: grid; grid-template-columns: 42px 1fr; column-gap: 12px; align-items: baseline; }
@@ -272,42 +282,39 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 .request-unfurl:hover { color: var(--accent); }
 .request-part small:empty { display: none; }
 
-/* ---------- downloads ---------- */
+/* ---------- downloads, on the card ---------- */
 /* Mylar gives a state and a size, never a byte count, so there is no bar to
-   draw. The running row is marked by a moving rule instead: it says "this one
+   draw. The running card is marked by a moving rule instead: it says "this one
    is live" without claiming to know how far along it is. */
-.download-panel:empty { display: none; }
-.download-list { border: 1px solid var(--rule); background: var(--surface); }
-.download-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 20px;
-  align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--rule); }
-.download-row:last-child { border-bottom: 0; }
-.download-row b { display: block; font-size: 13px; }
-.download-row small { color: var(--muted); font-size: 11px; }
-.download-state { text-align: right; display: grid; gap: 3px; }
-.download-row.running { position: relative; }
-.download-row.running::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+.entry-download:empty, .entry-download-slot:empty { display: none; }
+.entry-download { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 11px 20px; border-top: 1px solid var(--rule); background: rgba(255, 255, 255, 0.015); }
+.entry-download.running { position: relative; }
+.entry-download.running::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
   background: var(--accent); animation: download-pulse 2.4s ease-in-out infinite; }
 @keyframes download-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .download-row.running::before { animation: none; opacity: 1; } }
-.download-warning { max-width: 76ch; margin: -8px 0 18px; color: var(--body); font-size: 13px;
+@media (prefers-reduced-motion: reduce) { .entry-download.running::before { animation: none; opacity: 1; } }
+.entry-download-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.download-warning { max-width: 76ch; margin: -4px 0 18px; color: var(--body); font-size: 13px;
   line-height: 1.6; border-left: 2px solid var(--accent); padding-left: 14px; }
+.download-warning .secondary { margin-left: 6px; }
 
 /* A quiet action sits beside a real one without competing with it: stopping
    something is never the button a reader should hit by accident. */
 .secondary.quiet { color: var(--muted); border-color: transparent; }
 .secondary.quiet:hover { color: var(--accent); border-color: var(--rule); }
 a.secondary { display: inline-block; text-decoration: none; }
-.download-actions { display: flex; gap: 8px; align-items: center; }
-.request-series-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.request-series-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .waiting-since { grid-column: 2; color: var(--faint); font-size: 11px; }
 
-/* Why a request has not moved. Sits between the explainer and the list because
-   it is about the whole list, not any one row. */
+/* Why a request has not moved. Sits above the list because it is about the
+   whole list, not any one book. */
 .search-state { display: flex; gap: 20px; align-items: center; justify-content: space-between;
   border: 1px solid var(--rule); border-left: 2px solid var(--accent); background: var(--surface);
   padding: 16px 20px; margin: 0 0 16px; }
 .search-state b { font-size: 13px; }
 .search-state p { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 4px; max-width: 70ch; }
+.search-state .secondary { flex: none; }
 
 .picker-note { font-size: 12px; line-height: 1.6; color: var(--body); margin-top: 8px;
   border-left: 2px solid var(--rule); padding-left: 12px; }
@@ -452,8 +459,10 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .info:hover::after, .info:focus-visible::after {
   opacity: 1; visibility: visible; transform: translateY(0);
 }
-/* Near the right edge the popover would run off screen. */
-.info.right::after { left: auto; right: 0; }
+/* Near the right edge the popover would run off screen -- and the page clips
+   rather than scrolls, so it would be gone rather than merely awkward.
+   placeTip() adds this on hover or focus after one measurement. */
+.info.right::after, .term.right::after { left: auto; right: 0; }
 /* A tooltip inside a button must not swallow the click that opens the card. */
 .info { pointer-events: auto; }
 
@@ -652,9 +661,8 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   .connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .path-grid { grid-template-columns: 1fr 1fr; }
   .request-part { grid-template-columns: 1fr; }
-  .download-row { grid-template-columns: minmax(0, 1fr) auto; }
   .search-state { flex-direction: column; align-items: flex-start; }
-  .download-row .secondary { grid-column: 2; justify-self: end; }
+  .entry-download-actions { margin-left: 0; }
   .request-series-head { grid-template-columns: 46px minmax(0, 1fr); }
   .request-series-head .secondary { grid-column: 2; justify-self: start; }
   .request-series-cover .cover { width: 46px; }
