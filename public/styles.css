@@ -169,12 +169,12 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .info {
   display: inline-grid; place-items: center; vertical-align: -2px;
   width: 17px; height: 17px; border-radius: 50%; color: var(--muted);
-  position: relative; cursor: help; flex: none;
+  position: relative; cursor: pointer; flex: none;
 }
 .info:hover, .info:focus-visible { color: var(--accent); }
 .info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.term { border-bottom: 1px dotted currentColor; cursor: help; position: relative; }
+.term { border-bottom: 1px dotted currentColor; position: relative; }
 .term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .info::after,
 .term::after {
@@ -255,12 +255,12 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .info {
   display: inline-grid; place-items: center; vertical-align: -2px;
   width: 17px; height: 17px; border-radius: 50%; color: var(--muted);
-  position: relative; cursor: help; flex: none;
+  position: relative; cursor: pointer; flex: none;
 }
 .info:hover, .info:focus-visible { color: var(--accent); }
 .info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.term { border-bottom: 1px dotted currentColor; cursor: help; position: relative; }
+.term { border-bottom: 1px dotted currentColor; position: relative; }
 .term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .info::after,
 .term::after {

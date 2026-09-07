@@ -268,7 +268,6 @@ routes.browse = async () => {
   view.innerHTML = `<section class="lede browse-lede">
       <span class="kicker" style="color:var(--accent)">Browse</span>
       <h1>Start with a house,<br />or with the <em>shape</em> of the book.</h1>
-      <p>Hover any <span class="info-inline">&#9432;</span> for what the jargon means.</p>
     </section>
 
     <div class="section-head"><span class="kicker no">01</span><h2>Publishers</h2>

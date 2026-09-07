@@ -80,9 +80,47 @@ async function mylar(command, params = {}) {
   return body.data ?? body;
 }
 
+// ComicVine allows roughly 200 requests per resource per hour and answers 420
+// once you pass it. Two guards, because caching alone did not stop this session
+// from tripping it: a concurrency cap so a fan-out cannot burst, and a breaker
+// that stops calling entirely for a while once we are told to slow down.
+const CV_MAX_INFLIGHT = 4;
+const CV_COOLDOWN_MS = 5 * 60_000;
+let cvInflight = 0;
+let cvQueue = [];
+let cvLimitedUntil = 0;
+
+const comicVineStatus = () => ({
+  limited: Date.now() < cvLimitedUntil,
+  retryInSeconds: Math.max(0, Math.ceil((cvLimitedUntil - Date.now()) / 1000)),
+});
+
+function cvAcquire() {
+  if (cvInflight < CV_MAX_INFLIGHT) { cvInflight += 1; return Promise.resolve(); }
+  return new Promise((resolve) => cvQueue.push(resolve));
+}
+
+function cvRelease() {
+  const next = cvQueue.shift();
+  if (next) next();
+  else cvInflight -= 1;
+}
+
 async function comicVine(resource, params = {}) {
+  if (Date.now() < cvLimitedUntil) {
+    throw new Error('ComicVine is rate-limiting us; cached results only for a while.');
+  }
   const query = new URLSearchParams({ api_key: comicVineKey(), format: 'json', ...params });
   if (!query.has('field_list')) query.set('field_list', VOLUME_FIELDS);
+  await cvAcquire();
+  try {
+    return await comicVineFetch(resource, query);
+  } finally {
+    cvRelease();
+  }
+}
+
+async function comicVineFetch(resource, query) {
   const response = await fetch(`https://comicvine.gamespot.com/api/${resource}/?${query}`, {
     headers: { 'User-Agent': 'ComicRequester/1.0 (personal media server)' }, signal: AbortSignal.timeout(20_000),
   });
@@ -90,6 +128,8 @@ async function comicVine(resource, params = {}) {
   // matters: a bare status looks like a bug rather than throttling, and the
   // answer is to lean harder on the cache, not to retry into the limit.
   if (response.status === 420 || response.status === 429) {
+    // Back off rather than keep asking: further calls make the window longer.
+    cvLimitedUntil = Date.now() + CV_COOLDOWN_MS;
     throw new Error('ComicVine is rate-limiting us; cached results only for a while.');
   }
   if (!response.ok) throw new Error(`ComicVine returned HTTP ${response.status}`);
@@ -292,6 +332,7 @@ app.get('/api/health', async (_req, res) => {
       ok: true,
       watchlist: (await watchlist()).length,
       komga: Boolean(komgaUrl && komgaAuth),
+      comicvine: comicVineStatus(),
       // Reports reachability, not just configuration: Metron blocks an IP
       // outright for bursty traffic, and that should be visible here rather
       // than showing up as quietly missing data.
@@ -312,6 +353,7 @@ app.get('/api/library', async (_req, res, next) => {
         searching: items.filter((x) => !x.inLibrary).length,
       },
       komga: Boolean(komgaUrl && komgaAuth),
+      comicvine: comicVineStatus(),
     });
   } catch (error) { next(error); }
 });
