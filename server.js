@@ -278,6 +278,46 @@ const LINES = {
   'Boom! Studios': ['BOOM! Box', 'Archaia'],
 };
 
+// Volumes are what you request; threads are what you follow. Browse needs to
+// reach the latter, so this searches characters, teams, creators and arcs.
+const SEARCH_RESOURCES = { character: 'character', team: 'team', person: 'person', story_arc: 'story_arc' };
+
+app.get('/api/threads', async (req, res, next) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ items: [] });
+  try {
+    const rows = await cached(`threads:${normalise(q)}`, 24 * 60 * 60_000, () =>
+      comicVine('search', {
+        query: q,
+        resources: Object.values(SEARCH_RESOURCES).join(','),
+        limit: '40',
+        field_list: 'id,name,deck,image,publisher,count_of_issue_appearances,resource_type',
+      }));
+    const items = (rows ?? [])
+      .filter((x) => SEARCH_RESOURCES[x.resource_type] && x.name)
+      .map((x) => ({
+        id: String(x.id),
+        kind: x.resource_type,
+        name: x.name,
+        deck: plainText(x.deck || '').slice(0, 160) || null,
+        publisher: x.publisher?.name ?? null,
+        appearances: Number(x.count_of_issue_appearances) || 0,
+        image: x.image?.medium_url ?? null,
+      }))
+      .sort((a, b) => b.appearances - a.appearances);
+    // Bucket by kind before trimming. Creators and story arcs carry no issue
+    // appearance count, so a single global sort by prominence buries them
+    // entirely -- searching "junji ito" returned characters named Ito and not
+    // the man himself.
+    const quota = { character: 10, person: 6, team: 5, story_arc: 5 };
+    const LABEL = { character: 'Characters', person: 'Creators', team: 'Teams', story_arc: 'Events' };
+    const groups = Object.keys(quota)
+      .map((kind) => ({ kind, label: LABEL[kind], items: items.filter((x) => x.kind === kind).slice(0, quota[kind]) }))
+      .filter((g) => g.items.length);
+    res.json({ groups, total: groups.reduce((n, g) => n + g.items.length, 0) });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/lines', (_req, res) => res.json({ lines: LINES }));
 
 app.get('/api/search', async (req, res, next) => {

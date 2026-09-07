@@ -3,3 +3,6 @@ npm-debug.log
 
 # Local ComicVine/Komga cache — rebuildable, and large.
 data/
+
+# Seeded design canvas — rebuildable from design/*.dc.html + canvas.json
+design/panel-comic-app.html
