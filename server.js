@@ -91,8 +91,10 @@ function memo(key, maxAge, get) {
   return value;
 }
 
-function normalise(text = '') {
-  return text.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+function normalise(text) {
+  // Callers pass ComicVine fields straight in, and a missing publisher arrives
+  // as null rather than undefined, so a default parameter is not enough.
+  return String(text ?? '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 // A deliberately transparent fuzzy scorer: exact series names win, then word
@@ -102,15 +104,19 @@ function relevance(item, query) {
   const title = normalise(item.name);
   const publisher = normalise(item.publisher?.name ?? item.publisher);
   if (!q) return 0;
-  if (title === q) return 10_000;
-  let score = title.startsWith(q) ? 5_000 : title.includes(q) ? 3_000 : 0;
+  // Compare with separators stripped too, so "spiderman" matches "Spider-Man".
+  const qTight = q.replaceAll(' ', '');
+  const titleTight = title.replaceAll(' ', '');
+  if (title === q || titleTight === qTight) return 10_000;
+  let score = 0;
+  if (title.startsWith(q) || titleTight.startsWith(qTight)) score = 5_000;
+  else if (title.includes(q) || titleTight.includes(qTight)) score = 3_000;
   const words = q.split(' ');
   score += words.reduce((sum, word) => sum + (title.split(' ').some((x) => x.startsWith(word)) ? 350 : 0), 0);
   if (publisher.includes(q)) score += 150;
-  const compactTitle = title.replaceAll(' ', '');
   let index = 0;
-  for (const char of q.replaceAll(' ', '')) {
-    index = compactTitle.indexOf(char, index);
+  for (const char of qTight) {
+    index = titleTight.indexOf(char, index);
     if (index < 0) return score;
     index += 1;
   }
@@ -121,14 +127,29 @@ function plainText(value = '') {
   return String(value).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Ordered most-specific first: a "Deluxe Edition Omnibus" is an omnibus.
+// ComicVine has no format field worth trusting, and descriptions list every
+// edition a book was ever printed in, so this reads the title only.
+const EDITIONS = [
+  ['Omnibus', /\bomnibus\b/],
+  ['Compendium', /\bcompendium\b/],
+  ['Absolute', /\babsolute\b/],
+  ['Epic Collection', /\bepic collection\b/],
+  ['Masterworks', /\b(masterworks|marvel masterworks)\b/],
+  ['Deluxe edition', /\b(deluxe|oversized|treasury|artist.s edition|gallery edition)\b/],
+  ['Library edition', /\b(library edition|complete collection|the complete|ultimate collection)\b/],
+  ['Hardcover', /\b(hardcover|hard cover|\bhc\b)\b/],
+  ['Collected edition', /\b(tpb|trade paperback|collected edition|collection|graphic novel|\bogn\b)\b/],
+  ['Annual', /\bannual\b/],
+  ['One-shot', /\b(one.shot|special|giant.size)\b/],
+];
+
 function catalogueShape(item, watchedIds) {
   const image = item.image || {};
   const titleText = String(item.name || '').toLowerCase();
   // Descriptions frequently list every available format (even on a regular
   // series), so classify from the listing title/type rather than its blurb.
-  const edition = /\bomnibus\b/.test(titleText) ? 'Omnibus'
-    : /\b(tp\s?b|trade paperback|hardcover|hard cover|deluxe|compendium|complete collection|collected edition|library edition)\b/.test(titleText) || item.type === 'TPB' ? 'Collected edition'
-      : 'Series';
+  const edition = EDITIONS.find(([, pattern]) => pattern.test(titleText))?.[0] ?? 'Series';
   return {
     id: String(item.id), title: item.name, year: item.start_year, publisher: item.publisher?.name,
     issues: Number(item.count_of_issues) || 0, cover: image.super_url || image.medium_url || image.small_url || null,
@@ -320,12 +341,31 @@ app.get('/api/threads', async (req, res, next) => {
 
 app.get('/api/lines', (_req, res) => res.json({ lines: LINES }));
 
+// ComicVine caps a page at 100 and ignores every sort parameter, so breadth has
+// to come from paging and the ordering has to be ours. "spiderman" alone matches
+// 1,426 volumes -- reading only the first page hid nearly every omnibus.
+const SEARCH_PAGES = 3;
+
+async function searchVolumes(q, edition = '') {
+  // ComicVine buries collected editions: query=spider-man returns exactly one
+  // omnibus on page one. Asking for the format by name is the only way to
+  // surface them, so a format filter becomes part of the query rather than a
+  // filter applied to whatever the generic search happened to return.
+  const queries = edition ? [q, `${q} ${edition}`] : [q];
+  const pages = await Promise.all(queries.flatMap((query) =>
+    Array.from({ length: SEARCH_PAGES }, (_, i) =>
+      comicVine('search', { query, resources: 'volume', limit: '100', page: String(i + 1) })
+        .catch(() => []))));
+  return pages.flat();
+}
+
 app.get('/api/search', async (req, res, next) => {
   const q = String(req.query.q || '').trim();
-  if (q.length < 2) return res.json({ items: [] });
+  const edition = EDITIONS.some(([name]) => name === req.query.edition) ? String(req.query.edition) : '';
+  if (q.length < 2) return res.json({ items: [], editions: EDITIONS.map(([name]) => name) });
   try {
     const [raw, library] = await Promise.all([
-      cached(`search:${normalise(q)}`, 24 * 60 * 60_000, () => comicVine('search', { query: q, resources: 'volume', limit: 100 })), watchlist(),
+      cached(`search:${normalise(q)}:${edition}`, 24 * 60 * 60_000, () => searchVolumes(q, edition)), watchlist(),
     ]);
     const watchedIds = new Set(library.map((item) => item.id));
     const deduped = new Map();
@@ -338,25 +378,93 @@ app.get('/api/search', async (req, res, next) => {
       .map((item) => ({ item: catalogueShape(item, watchedIds), score: relevance(item, q) }))
       .filter(({ score }) => score > 0)
       .sort((a, b) => b.score - a.score || b.item.issues - a.item.issues)
-      .slice(0, 60).map(({ item }) => item);
-    res.json({ items });
+      .slice(0, 120).map(({ item }) => item);
+    res.json({
+      items: edition ? items.filter((x) => x.edition === edition) : items,
+      edition,
+      // Every format the classifier knows, so the filter is not limited to
+      // whatever happens to be in this one result set.
+      editions: EDITIONS.map(([name]) => name),
+    });
   } catch (error) { next(error); }
 });
 
-const rails = [
-  { id: 'omnibus', title: 'Omnibuses', resource: 'volumes', params: { filter: 'name:omnibus', limit: 20, sort: 'date_last_updated:desc' } },
-  { id: 'superheroes', title: 'Superhero essentials', resource: 'search', params: { query: 'Batman', resources: 'volume', limit: 20 } },
-  { id: 'science-fiction', title: 'Science-fiction worlds', resource: 'search', params: { query: 'science fiction', resources: 'volume', limit: 20 } },
-  { id: 'horror', title: 'Horror & supernatural', resource: 'search', params: { query: 'horror', resources: 'volume', limit: 20 } },
-  { id: 'manga', title: 'Manga collections', resource: 'search', params: { query: 'manga omnibus', resources: 'volume', limit: 20 } },
+// ComicVine ignores both sort and publisher filters, so a rail is: cast a wide
+// net across several pages, then do the curation here. Without it "Superhero
+// essentials" was sixteen different volumes all called Batman, and "Omnibuses"
+// was whatever Dark Horse last touched.
+const MAJOR_PUBLISHERS = [
+  'Marvel', 'DC Comics', 'Image', 'Dark Horse Comics', 'IDW Publishing',
+  'Boom! Studios', 'Dynamite Entertainment', 'Valiant', 'Vertigo', 'Wildstorm',
 ];
+
+// Publisher weighting stands in for the relevance ComicVine will not provide.
+const PUBLISHER_WEIGHT = {
+  Marvel: 100, 'DC Comics': 100, Image: 80, 'Dark Horse Comics': 60,
+  'IDW Publishing': 50, 'Boom! Studios': 40, Vertigo: 70, Wildstorm: 40,
+  Valiant: 40, 'Dynamite Entertainment': 30,
+};
+const weightOf = (name = '') =>
+  Object.entries(PUBLISHER_WEIGHT).find(([p]) => name.startsWith(p))?.[1] ?? 0;
+
+const rails = [
+  { id: 'omnibus', title: 'Omnibuses', edition: 'Omnibus', majorsOnly: true,
+    queries: ['spider-man omnibus', 'batman omnibus', 'x-men omnibus', 'avengers omnibus', 'superman omnibus'] },
+  { id: 'collections', title: 'Big collections', majorsOnly: true,
+    queries: ['compendium', 'epic collection', 'absolute edition', 'masterworks'] },
+  { id: 'superheroes', title: 'Superhero essentials', majorsOnly: true,
+    queries: ['batman', 'x-men', 'avengers', 'superman', 'justice league', 'fantastic four'] },
+  { id: 'creator-owned', title: 'Creator-owned',
+    queries: ['saga brian k vaughan', 'invincible compendium', 'the sandman', 'hellboy library', 'monstress', 'paper girls'] },
+  { id: 'manga', title: 'Manga collections',
+    queries: ['berserk deluxe', 'vagabond vizbig', 'one piece omnibus', 'fullmetal alchemist omnibus',
+              'naruto 3-in-1', 'death note black edition', 'uzumaki'] },
+];
+
+// One title per name, so a rail never shows the same book five times over.
+function curateRail(rail, tagged) {
+  const seen = new Set();
+  return tagged
+    .filter(({ item }) => item && item.name && item.image?.super_url)
+    .filter(({ item }) => {
+      if (rail.edition && !new RegExp(`\\b${rail.edition}\\b`, 'i').test(item.name)) return false;
+      const publisher = item.publisher?.name || '';
+      if (rail.majorsOnly && !MAJOR_PUBLISHERS.some((p) => publisher.startsWith(p))) return false;
+      const key = normalise(item.name);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    // No server-side sort exists, so ordering is ours. Majors-only rails rank by
+    // publisher standing then heft; the rest rank by how well the book actually
+    // matches the query that found it.
+    .sort((a, b) => (rail.majorsOnly
+      ? (weightOf(b.item.publisher?.name) - weightOf(a.item.publisher?.name))
+      : (relevance(b.item, b.query) - relevance(a.item, a.query)))
+      || ((Number(b.item.count_of_issues) || 0) - (Number(a.item.count_of_issues) || 0)))
+    .slice(0, 18)
+    .map(({ item }) => item);
+}
+
+async function railRows(rail) {
+  // Keep the query that found each row: for rails that are not about the big
+  // two, relevance to that query orders far better than publisher standing --
+  // weighting alone put Batman at the top of the manga rail.
+  const results = await Promise.all(rail.queries.flatMap((query) => [1, 2].map(async (page) => {
+    const rows = await comicVine('search', { query, resources: 'volume', limit: '100', page: String(page) })
+      .catch(() => []);
+    return rows.map((item) => ({ item, query }));
+  })));
+  return curateRail(rail, results.flat());
+}
 
 app.get('/api/discover', async (_req, res, next) => {
   try {
     const library = await watchlist(); const watchedIds = new Set(library.map((item) => item.id));
     const sections = await Promise.all(rails.map(async (rail) => ({
       id: rail.id, title: rail.title,
-      items: (await cached(`rail:${rail.id}`, 7 * 24 * 60 * 60_000, () => comicVine(rail.resource, rail.params))).slice(0, 16).map((item) => catalogueShape(item, watchedIds)),
+      items: (await cached(`rail:${rail.id}:v4`, 7 * 24 * 60 * 60_000, () => railRows(rail)))
+        .map((item) => catalogueShape(item, watchedIds)),
     })));
     res.json({ sections });
   } catch (error) { next(error); }

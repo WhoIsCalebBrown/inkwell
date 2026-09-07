@@ -8,7 +8,20 @@ const sheetBody = document.querySelector('#sheet-body');
 const toastEl = document.querySelector('#toast');
 const searchInput = document.querySelector('#search-input');
 
-const state = { shelf: [], filters: {}, results: [] };
+const state = { shelf: [], filters: {}, results: [], editions: [], query: '' };
+
+/* ---------------- poster size ---------------- */
+
+const poster = document.querySelector('#poster');
+function setPoster(px, persist = true) {
+  const size = Math.min(320, Math.max(110, Number(px) || 150));
+  document.documentElement.style.setProperty('--poster', `${size}px`);
+  poster.value = String(size);
+  // Per-device preference; a phone and a desk monitor want different answers.
+  if (persist) { try { localStorage.setItem('panel:poster', String(size)); } catch { /* private mode */ } }
+}
+try { setPoster(localStorage.getItem('panel:poster') ?? 150, false); } catch { setPoster(150, false); }
+poster.addEventListener('input', (event) => setPoster(event.target.value));
 
 /* ---------------- plumbing ---------------- */
 
@@ -32,8 +45,17 @@ function toast(message, kind = '') {
   toastTimer = setTimeout(() => { toastEl.className = ''; }, 4200);
 }
 
-const skeletons = (n, cols = 'repeat(auto-fill, minmax(150px, 1fr))') =>
-  `<div class="grid" style="grid-template-columns:${cols}">${'<div class="skeleton"></div>'.repeat(n)}</div>`;
+const skeletonCard = `<div class="skeleton-card">
+  <div class="skeleton"></div>
+  <div class="skeleton-line" style="width:80%"></div>
+  <div class="skeleton-line" style="width:52%"></div>
+</div>`;
+
+// Mirrors the shape of what is coming, so the page does not jump when it lands.
+const skeletons = (n, cols) =>
+  `<div class="grid"${cols ? ` style="grid-template-columns:${cols}"` : ''}>${skeletonCard.repeat(n)}</div>`;
+
+const skeletonRail = (n = 8) => `<div class="rail">${skeletonCard.repeat(n)}</div>`;
 
 // Deterministic tint from the id, so a title always looks the same before its
 // real cover arrives — and stays recognisable if ComicVine never has one.
@@ -111,8 +133,14 @@ routes.discover = async () => {
       <p>Search a character, a creator or a book. Requesting hands it to Mylar, which
          hunts it down and files it into Komga.</p>
     </section>
-    <div id="shelf-section"></div>
-    <div id="rails">${skeletons(6)}</div>`;
+    <div id="shelf-section">
+      <div class="section-head"><span class="kicker no">01</span><h2>On your shelf</h2></div>
+      ${skeletonRail(7)}
+    </div>
+    <div id="rails">
+      <div class="section-head"><span class="kicker no">02</span><h2>Omnibuses</h2></div>
+      ${skeletonRail(8)}
+    </div>`;
 
   const shelfSection = document.querySelector('#shelf-section');
   loadShelf().then(({ items, counts }) => {
@@ -198,23 +226,45 @@ routes.search = async (encoded) => {
   const books = document.querySelector('#books');
   try {
     await loadShelf().catch(() => {});
-    const { items } = await api(`/api/search?q=${encodeURIComponent(query)}`);
-    state.results = items;
+    state.query = query;
     state.filters = { format: 'all', publisher: 'all', sort: 'relevance' };
     books.innerHTML = `<div class="section-head"><h2>Books</h2>
         <span class="kicker aside" id="count"></span></div>
       <div class="filters" id="filters"></div>
-      <div class="grid" id="results"></div>`;
-    renderFilters();
-    renderResults();
+      <div id="results">${skeletons(10)}</div>`;
+    await loadBooks();
   } catch (error) {
     books.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
   }
 };
 
+// The format filter is a query, not a view filter: ComicVine ranks collected
+// editions so low that searching "spider-man" surfaces exactly one omnibus on
+// its first page, so asking for the format has to reach the API.
+async function loadBooks() {
+  const results = document.querySelector('#results');
+  results.innerHTML = skeletons(10);
+  const format = state.filters.format;
+  const url = `/api/search?q=${encodeURIComponent(state.query)}`
+    + (format && format !== 'all' ? `&edition=${encodeURIComponent(format)}` : '');
+  try {
+    const data = await api(url);
+    state.results = data.items;
+    state.editions = data.editions ?? [];
+    renderFilters();
+    renderResults();
+  } catch (error) {
+    results.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
 function renderFilters() {
   const publishers = [...new Set(state.results.map((x) => x.publisher).filter(Boolean))].sort();
-  const editions = [...new Set(state.results.map((x) => x.edition).filter(Boolean))];
+  // Every format the classifier knows, not just the ones this page happened to
+  // return -- otherwise the list shrinks to three the moment a search is narrow.
+  const editions = state.editions.length
+    ? state.editions
+    : [...new Set(state.results.map((x) => x.edition).filter(Boolean))];
   const select = (key, label, options) => `<label><span class="kicker">${label}</span>
     <select data-filter="${key}">${options.map(([v, t]) =>
       `<option value="${esc(v)}"${state.filters[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
@@ -225,10 +275,9 @@ function renderFilters() {
 }
 
 function renderResults() {
-  const { format, publisher, sort } = state.filters;
-  let list = state.results
-    .filter((x) => format === 'all' || x.edition === format)
-    .filter((x) => publisher === 'all' || x.publisher === publisher);
+  const { publisher, sort } = state.filters;
+  // Format is applied server-side by loadBooks(); only publisher narrows here.
+  let list = state.results.filter((x) => publisher === 'all' || x.publisher === publisher);
   if (sort === 'newest') list = [...list].sort((a, b) => (b.year || 0) - (a.year || 0));
   if (sort === 'issues') list = [...list].sort((a, b) => b.issues - a.issues);
   if (sort === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title));
@@ -241,7 +290,16 @@ function renderResults() {
 /* ---------------- thread ---------------- */
 
 routes.thread = async (kind, id) => {
-  view.innerHTML = `<div class="thread"><div class="skeleton portrait"></div><div></div></div>`;
+  view.innerHTML = `<div class="thread">
+      <div class="skeleton portrait" style="aspect-ratio:3/4"></div>
+      <div>
+        <div class="skeleton-line" style="width:38%"></div>
+        <div class="skeleton-line" style="width:64%;height:56px;margin-top:16px"></div>
+        <div class="skeleton-line" style="width:44%;margin-top:18px"></div>
+        <div class="skeleton-line" style="width:90%;margin-top:30px"></div>
+        <div class="skeleton-line" style="width:82%;margin-top:10px"></div>
+      </div>
+    </div>`;
   const [thread] = await Promise.all([api(`/api/thread/${kind}/${id}`), loadShelf().catch(() => {})]);
   const stat = (label, value) => value
     ? `<div><span class="kicker">${label}</span><b class="disp">${esc(value)}</b></div>` : '';
@@ -274,7 +332,7 @@ routes.thread = async (kind, id) => {
         `<button class="chip kicker" data-thread="${esc(t.kind)}/${esc(t.id)}">${esc(t.name)}</button>`).join('')}</div>` : ''}
     <div class="section-head"><span class="kicker no">${thread.teams?.length ? '02' : '01'}</span>
       <h2>Books</h2><span class="kicker aside">Oldest first</span></div>
-    <div id="thread-books">${skeletons(10)}</div>`;
+    <div id="thread-books">${skeletons(12)}</div>`;
 
   // ComicVine cannot list a character's volumes (volume_credits is unreliable
   // and issue_credits runs to five figures), so this is a title search on the
@@ -322,7 +380,17 @@ routes.library = async () => {
 /* ---------------- volume sheet ---------------- */
 
 async function openVolume(id) {
-  sheetBody.innerHTML = `<div class="sheet-top"><span class="kicker">Loading…</span></div>`;
+  sheetBody.innerHTML = `<div class="sheet-top"><span class="kicker">Volume</span></div>
+    <div class="sheet-body">
+      <div class="skeleton"></div>
+      <div>
+        <div class="skeleton-line" style="width:70%;height:34px"></div>
+        <div class="skeleton-line" style="width:40%;margin-top:20px"></div>
+        <div class="skeleton-line" style="width:92%;margin-top:24px"></div>
+        <div class="skeleton-line" style="width:88%;margin-top:10px"></div>
+        <div class="skeleton-line" style="width:64%;margin-top:10px"></div>
+      </div>
+    </div>`;
   sheet.showModal();
   try {
     const item = await api(`/api/volume/${id}`);
@@ -408,7 +476,8 @@ document.addEventListener('change', (event) => {
   const filter = event.target.closest('[data-filter]');
   if (!filter) return;
   state.filters[filter.dataset.filter] = filter.value;
-  renderResults();
+  if (filter.dataset.filter === 'format') loadBooks();
+  else renderResults();
 });
 
 document.querySelector('#search-form').addEventListener('submit', (event) => {

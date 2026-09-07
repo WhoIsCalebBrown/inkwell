@@ -16,6 +16,8 @@
   --disp: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
   --ui: 'Archivo', 'Helvetica Neue', system-ui, sans-serif;
   --gutter: clamp(20px, 4vw, 64px);
+  /* Cover size, driven by the poster slider and remembered per device. */
+  --poster: 150px;
 }
 
 * { box-sizing: border-box; }
@@ -80,17 +82,17 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
   font-size: 9px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; padding: 5px 9px; }
 
 /* ---------- grids ---------- */
-.grid { display: grid; gap: 26px 22px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.grid { display: grid; gap: 26px 22px; grid-template-columns: repeat(auto-fill, minmax(var(--poster), 1fr)); }
 .card { display: flex; flex-direction: column; gap: 11px; text-align: left; }
 .card .meta { display: flex; flex-direction: column; gap: 4px; }
-.card h3 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.32; }
+.card h3 { margin: 0; font-size: clamp(13px, calc(9px + var(--poster) * 0.026), 17px); font-weight: 600; line-height: 1.32; }
 .card .sub { font-size: 11.5px; color: var(--muted); }
 .card .act { align-self: flex-start; margin-top: 4px; font-size: 11.5px; font-weight: 600;
   letter-spacing: 0.03em; border-bottom: 1px solid var(--muted); padding-bottom: 3px; }
 .card .act.owned { color: var(--shelf); border-color: #3c5c4c; }
 .card .act[disabled] { opacity: 0.75; cursor: default; }
 
-.rail { display: grid; grid-auto-flow: column; grid-auto-columns: 150px; gap: 22px;
+.rail { display: grid; grid-auto-flow: column; grid-auto-columns: var(--poster); gap: 22px;
   overflow-x: auto; padding-bottom: 10px; scroll-snap-type: x proximity; }
 .rail > * { scroll-snap-align: start; }
 
@@ -151,10 +153,34 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   letter-spacing: 0.03em; padding: 15px 26px; display: inline-flex; align-items: center; gap: 10px; }
 .primary[disabled] { background: var(--surface-2); color: var(--muted); cursor: default; }
 
+/* ---------- poster slider ---------- */
+.poster-control { display: flex; align-items: center; gap: 10px; }
+.poster-control input[type='range'] {
+  -webkit-appearance: none; appearance: none; width: 108px; height: 18px; background: none; cursor: pointer;
+}
+.poster-control input[type='range']::-webkit-slider-runnable-track { height: 1px; background: var(--rule); }
+.poster-control input[type='range']::-moz-range-track { height: 1px; background: var(--rule); }
+.poster-control input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 13px; height: 13px; margin-top: -6px;
+  background: var(--text); border: 0;
+}
+.poster-control input[type='range']::-moz-range-thumb { width: 13px; height: 13px; background: var(--text); border: 0; }
+.poster-control input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.poster-control svg { color: var(--muted); flex: none; }
+
 /* ---------- feedback ---------- */
 .empty { padding: 56px 0; color: var(--muted); text-align: center; }
-.skeleton { aspect-ratio: 2 / 3; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 37%, var(--surface) 63%);
-  background-size: 400% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+.skeleton, .skeleton-line {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 37%, var(--surface) 63%);
+  background-size: 400% 100%; animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton { aspect-ratio: 2 / 3; }
+.skeleton-line { height: 11px; }
+.skeleton-card { display: flex; flex-direction: column; gap: 11px; }
+/* Stagger the shimmer so a grid reads as one sweep rather than a strobe. */
+.skeleton-card:nth-child(2n) .skeleton { animation-delay: 0.12s; }
+.skeleton-card:nth-child(3n) .skeleton { animation-delay: 0.24s; }
+.skeleton-card:nth-child(5n) .skeleton { animation-delay: 0.36s; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 
