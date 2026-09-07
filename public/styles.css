@@ -242,9 +242,11 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 
 /* ---------- index rows (library, reading order) ---------- */
 .index { border-top: 1.5px solid var(--rule-strong); }
-.row { display: grid; grid-template-columns: 40px 44px 1fr auto; gap: 18px; align-items: center;
+.row { display: grid; grid-template-columns: 40px 44px 1fr auto auto; gap: 18px; align-items: center;
   border-bottom: 1px solid var(--rule); padding: 14px 0; text-align: left; width: 100%; }
 .row .thumb { width: 44px; aspect-ratio: 2 / 3; }
+.read-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.read-link:hover { text-decoration: underline; }
 .row .title { font-family: var(--disp); font-size: clamp(18px, 2.4vw, 24px); line-height: 1.14; }
 .row .state { text-align: right; white-space: nowrap; }
 .row .state.owned { color: var(--shelf); }
@@ -289,6 +291,36 @@ nav button[aria-current='true'] { color: var(--text); border-bottom-color: var(-
 @media (prefers-reduced-motion: reduce) { .download-row.running::before { animation: none; opacity: 1; } }
 .download-warning { max-width: 76ch; margin: -8px 0 18px; color: var(--body); font-size: 13px;
   line-height: 1.6; border-left: 2px solid var(--accent); padding-left: 14px; }
+
+/* A quiet action sits beside a real one without competing with it: stopping
+   something is never the button a reader should hit by accident. */
+.secondary.quiet { color: var(--muted); border-color: transparent; }
+.secondary.quiet:hover { color: var(--accent); border-color: var(--rule); }
+a.secondary { display: inline-block; text-decoration: none; }
+.download-actions { display: flex; gap: 8px; align-items: center; }
+.request-series-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.waiting-since { grid-column: 2; color: var(--faint); font-size: 11px; }
+
+/* Why a request has not moved. Sits between the explainer and the list because
+   it is about the whole list, not any one row. */
+.search-state { display: flex; gap: 20px; align-items: center; justify-content: space-between;
+  border: 1px solid var(--rule); border-left: 2px solid var(--accent); background: var(--surface);
+  padding: 16px 20px; margin: 0 0 16px; }
+.search-state b { font-size: 13px; }
+.search-state p { color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 4px; max-width: 70ch; }
+
+.picker-note { font-size: 12px; line-height: 1.6; color: var(--body); margin-top: 8px;
+  border-left: 2px solid var(--rule); padding-left: 12px; }
+.picker-note.owned { border-left-color: var(--shelf); }
+.picker-note a { color: var(--accent); }
+
+.event-list { border: 1px solid var(--rule); background: var(--surface); }
+.event-row { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 16px;
+  padding: 13px 20px; border-bottom: 1px solid var(--rule); }
+.event-row:last-child { border-bottom: 0; }
+.event-row b { font-size: 13px; font-weight: 500; }
+.event-row small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 3px; }
+.event-row.warn b { color: var(--accent); }
 
 /* ---------- chips ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -621,6 +653,7 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
   .path-grid { grid-template-columns: 1fr 1fr; }
   .request-part { grid-template-columns: 1fr; }
   .download-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .search-state { flex-direction: column; align-items: flex-start; }
   .download-row .secondary { grid-column: 2; justify-self: end; }
   .request-series-head { grid-template-columns: 46px minmax(0, 1fr); }
   .request-series-head .secondary { grid-column: 2; justify-self: start; }

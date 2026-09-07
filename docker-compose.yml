@@ -23,6 +23,15 @@ services:
       KOMGA_USER: ${KOMGA_USER:-}
       KOMGA_PASSWORD: ${KOMGA_PASSWORD:-}
       CACHE_DB: /data/cache.db
+      # Panel reaches Komga over the LAN; the reader's browser might come
+      # through a proxy, so the "Read" links can point somewhere else.
+      # KOMGA_PUBLIC_URL: https://komga.example.com
+      # Where to push "your book arrived" and "the queue has stopped". Any URL
+      # that accepts a POST: ntfy topic, Discord webhook, or your own receiver.
+      # Format is guessed from the URL; PANEL_NOTIFY_FORMAT overrides it with
+      # ntfy, discord or json.
+      PANEL_NOTIFY_URL: ${PANEL_NOTIFY_URL:-}
+      PANEL_NOTIFY_FORMAT: ${PANEL_NOTIFY_FORMAT:-auto}
       COVER_DIR: /data/covers
       # Optional. metron.cloud — a community comic database with better story
       # arcs than ComicVine. Auth is a bearer token despite the docs describing
@@ -30,7 +39,12 @@ services:
       METRON_TOKEN: ${METRON_TOKEN:-}
     volumes:
       # Reuses Mylar's API key without copying it into this project or browser.
-      - /mnt/cache/appdata/mylar3/mylar/config.ini:/run/mylar/config.ini:ro
+      # The whole directory rather than just config.ini: mylar.db is beside it,
+      # and it is the only place Mylar records which providers have searched,
+      # when, and when the next sweep is due. Read-only, and Panel only ever
+      # reads -- the file is journal_mode=delete, so that needs no write access
+      # to the file or its directory.
+      - /mnt/cache/appdata/mylar3/mylar:/run/mylar:ro
       # Same trick for the Komga login Komf already holds.
       - /mnt/cache/appdata/komf/application.yml:/run/komf/application.yml:ro
       # The container is read-only, so the ComicVine cache needs a writable home.

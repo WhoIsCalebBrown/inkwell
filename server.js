@@ -2,14 +2,16 @@ import express from 'express';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import zlib from 'node:zlib';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   cached, read as cacheRead, write as cacheWrite, clear as clearCache, stats as cacheStats,
   findVolumes, rememberVolumes, findObjects, listObjects, publisherArt, volumesForCharacters,
   decades, decadeVolumes, findObjectByName, findObjectsByName, findLinkedObjectIdByName, getObject, getVolume, rememberObjects, relatedVolumes,
-  getMylarParts, rememberMylarParts, setMylarPartStatus, listMylarParts, getCover, rememberCover,
+  getMylarParts, rememberMylarParts, setMylarPartStatus, listMylarParts, forgetMylarSeries, getCover, rememberCover,
   enqueueEnrichment, claimNextEnrichment, completeEnrichment, postponeEnrichment, enrichmentStats,
+  recordEvent, listEvents,
 } from './store.js';
 import * as metron from './metron.js';
 import * as lore from './lore.js';
@@ -94,6 +96,9 @@ function komgaCredentials() {
 
 const komgaCreds = komgaCredentials();
 const komgaUrl = (komgaCreds?.url || '').replace(/\/$/, '');
+// Panel's own requests reach Komga over the LAN; the reader's browser might be
+// coming through a proxy instead, so the link they follow is configurable.
+const komgaPublicUrl = (process.env.KOMGA_PUBLIC_URL || komgaUrl).replace(/\/$/, '');
 const komgaAuth = komgaCreds
   ? `Basic ${Buffer.from(`${komgaCreds.user}:${komgaCreds.password}`).toString('base64')}`
   : '';
@@ -566,6 +571,7 @@ async function komgaShelf() {
       const map = new Map();
       for (const s of page?.content ?? []) {
         map.set(shelfKey(s.name), {
+          id: String(s.id),
           books: s.booksCount ?? 0,
           read: s.booksReadCount ?? 0,
           unread: s.booksUnreadCount ?? 0,
@@ -577,6 +583,21 @@ async function komgaShelf() {
       return new Map();
     }
   });
+}
+
+// "Do I already have this?" asked of a title rather than a watchlist entry.
+// Komga's names carry a trailing year that Mylar's do not, which shelfKey
+// already settles; this is the same match, exposed to the pages that need to
+// warn a reader before they queue four gigabytes they own.
+async function ownedTitle(title) {
+  if (!title) return null;
+  const present = await komgaShelf();
+  const found = present.get(shelfKey(title));
+  if (!found?.id) return null;
+  return {
+    books: found.books ?? 0, read: found.read ?? 0, unread: found.unread ?? 0,
+    readUrl: `${komgaPublicUrl}/series/${encodeURIComponent(found.id)}`,
+  };
 }
 
 // The shelf is the join of the two systems: Mylar knows what was asked for,
@@ -591,6 +612,13 @@ async function shelf() {
       books: found?.books ?? 0,
       read: found?.read ?? 0,
       unread: found?.unread ?? 0,
+      inProgress: found?.inProgress ?? 0,
+      // The point of the whole app is to end up reading the book. Komga runs
+      // on the same LAN as this server, so its own URL is the reader's too --
+      // unless Panel is reached from outside, which is what the override is
+      // for. Without an id there is nothing to link to and the button is
+      // simply absent rather than pointing at a search page.
+      readUrl: found?.id ? `${komgaPublicUrl}/series/${encodeURIComponent(found.id)}` : null,
       state: found ? 'In library' : 'Searching',
     };
   });
@@ -661,6 +689,86 @@ async function refreshRequestParts() {
   }
 }
 
+// Between them, Mylar's API and its web UI still cannot answer the question a
+// waiting reader actually has: has anything looked for this, and when will it
+// look again? That lives only in its own SQLite, which Panel opens read-only.
+// The file is `journal_mode=delete`, so a reader needs no write access to it
+// or its directory -- which is what makes a `:ro` mount into a read-only
+// container safe. If the file is not there the feature is simply absent; every
+// caller degrades to null rather than failing a page.
+const mylarDbPath = process.env.MYLAR_DB || path.join(path.dirname(configPath), 'mylar.db');
+let mylarDbHandle = null;
+let mylarDbCheckedAt = 0;
+
+function mylarDb() {
+  if (mylarDbHandle) return mylarDbHandle;
+  // Re-check occasionally rather than per request: a missing file usually
+  // means local development, and stat-ing it on every page load is pointless.
+  if (Date.now() - mylarDbCheckedAt < 60_000) return null;
+  mylarDbCheckedAt = Date.now();
+  try {
+    mylarDbHandle = new DatabaseSync(mylarDbPath, { readOnly: true });
+  } catch { mylarDbHandle = null; }
+  return mylarDbHandle;
+}
+
+function mylarQuery(sql, ...params) {
+  const db = mylarDb();
+  if (!db) return null;
+  try { return db.prepare(sql).all(...params); } catch (error) {
+    // A schema change upstream must never take a page down with it.
+    console.warn(`Mylar database read failed: ${error.message}`);
+    mylarDbHandle = null;
+    return null;
+  }
+}
+
+// Mylar is inconsistent about time in three different ways: the DDL queue
+// writes local wall clock, jobhistory writes UTC, and `next_run_timestamp` is
+// a real epoch for some jobs and a UTC datetime string for others. Normalise
+// all of it to an ISO instant here so nothing downstream has to know.
+function instant(value) {
+  if (value == null || value === '') return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds > 0 ? new Date(seconds * 1000).toISOString() : null;
+  const text = String(value).trim().replace(' ', 'T');
+  const at = new Date(/[Z+]|-\d{2}:\d{2}$/.test(text) ? text : `${text}Z`);
+  return Number.isNaN(at.getTime()) ? null : at.toISOString();
+}
+
+// Why a part is still waiting: who has looked, when, and when the standing
+// sweep comes round again. Mylar searches every Wanted issue in one pass, so
+// the provider times are the same for all of them -- which is exactly the
+// point. "Nothing has searched since yesterday" is the answer.
+function searchState() {
+  const providers = mylarQuery(
+    'SELECT provider, type, lastrun, hits FROM provider_searches ORDER BY lastrun DESC',
+  );
+  if (!providers) return null;
+  const job = mylarQuery(
+    "SELECT next_run_timestamp, prev_run_timestamp, status FROM jobhistory WHERE JobName = 'Auto-Search'",
+  )?.[0];
+  const lastRun = providers.reduce((newest, row) => Math.max(newest, Number(row.lastrun) || 0), 0);
+  return {
+    providers: providers.map((row) => ({
+      name: String(row.provider), type: String(row.type || ''),
+      lastRun: instant(row.lastrun), hits: Number(row.hits) || 0,
+    })),
+    lastRun: instant(lastRun),
+    nextSweep: instant(job?.next_run_timestamp),
+    // Paused means the scheduled sweep will never come; only a manual search
+    // will move anything, and the page has to say so.
+    sweepPaused: String(job?.status || '') === 'Paused',
+  };
+}
+
+// When each waiting part was first asked for, straight from Mylar's own
+// issues table. Panel's copy only knows when it last polled.
+function wantedSince() {
+  const rows = mylarQuery("SELECT IssueID, DateAdded FROM issues WHERE Status = 'Wanted'");
+  return new Map((rows ?? []).map((row) => [String(row.IssueID), String(row.DateAdded || '')]));
+}
+
 // Mylar's API answers for what was asked for and what eventually arrived, but
 // it has no command for the part in between. Its direct-download queue lives
 // only behind the web UI -- so Panel reads that page's own JSON feed, on the
@@ -727,6 +835,13 @@ async function downloadQueue() {
   })).filter((item) => item.id && item.title);
 }
 
+// The queue rows carry Mylar's comic id, so "is this already downloading?" is
+// an exact match rather than another go at matching titles.
+async function queuedFor(comicId) {
+  const items = await memo('downloads:queue', 15_000, downloadQueue).catch(() => []);
+  return items.filter((item) => item.comicId === String(comicId) && item.state !== 'Completed');
+}
+
 app.get('/api/downloads', async (_req, res, next) => {
   try {
     const items = await downloadQueue();
@@ -738,6 +853,196 @@ app.get('/api/downloads', async (_req, res, next) => {
         done: counted('Completed'), failed: counted('Failed'),
       },
     });
+  } catch (error) { next(error); }
+});
+
+// Panel has been a page you have to visit. That is how a download queue sat
+// wedged for a day: everything needed to notice was on screen, and nobody was
+// looking at the screen. The watcher below turns state into events, which the
+// requests page shows on your return and which are pushed if a URL is set.
+//
+// It reads only what Mylar has already written. It never searches, never
+// queues, and never touches ComicVine.
+const NOTIFY_URL = (process.env.PANEL_NOTIFY_URL || '').trim();
+const NOTIFY_FORMAT = (process.env.PANEL_NOTIFY_FORMAT || 'auto').trim().toLowerCase();
+const WATCH_INTERVAL_MS = 5 * 60_000;
+// One warning per stall, not one every five minutes for a day.
+const STALL_QUIET_MS = 6 * 60 * 60_000;
+const STALL_AFTER_MS = 3 * 60 * 60_000;
+
+function notifyShape(event) {
+  const text = event.detail ? `${event.title}\n${event.detail}` : event.title;
+  const discord = NOTIFY_FORMAT === 'discord'
+    || (NOTIFY_FORMAT === 'auto' && /discord(app)?\.com\/api\/webhooks/i.test(NOTIFY_URL));
+  if (discord) {
+    return { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) };
+  }
+  if (NOTIFY_FORMAT === 'json') {
+    return {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: event.kind, title: event.title, detail: event.detail, at: event.at, text }),
+    };
+  }
+  // ntfy's own shape, which is a plain body plus headers. Generic receivers
+  // read the body and ignore the rest, so this is the least surprising default.
+  return {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', Title: event.title,
+      Tags: event.kind === 'stalled' ? 'warning' : 'books' },
+    body: event.detail || event.title,
+  };
+}
+
+async function pushEvent(event) {
+  if (!NOTIFY_URL) return;
+  try {
+    const { headers, body } = notifyShape(event);
+    const response = await fetch(NOTIFY_URL, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  } catch (error) {
+    // A notifier that is down must never be able to stop the watcher.
+    console.warn(`Could not push a notification: ${error.message}`);
+  }
+}
+
+async function announce(event) {
+  if (!recordEvent(event)) return;
+  await pushEvent(event);
+}
+
+// Mylar writes a post-processed row the moment a book lands in the library, so
+// that table is the arrival bell. The key pins the row so a restart cannot
+// re-announce yesterday's books. DateAdded is Mylar's local wall clock: it is
+// carried through untouched for the browser to read, and never parsed here,
+// where the container's idea of local time is UTC.
+function arrivals() {
+  const rows = mylarQuery(
+    "SELECT IssueID, ComicName, Issue_Number, DateAdded FROM snatched WHERE Status = 'Post-Processed' ORDER BY DateAdded DESC LIMIT 25",
+  );
+  return (rows ?? []).map((row) => ({
+    key: `arrived:${row.IssueID}:${row.DateAdded}`,
+    kind: 'arrived',
+    // The part number belongs in the title: three volumes of the same omnibus
+    // arriving read as one event repeated three times without it.
+    title: `${row.ComicName ?? 'A book'}${row.Issue_Number ? ` #${row.Issue_Number}` : ''} arrived`,
+    detail: 'Finished downloading and is in your library.',
+    at: Date.now(),
+    whenLocal: String(row.DateAdded ?? '') || null,
+  }));
+}
+
+let watching = false;
+
+async function watchForEvents() {
+  if (watching) return;
+  watching = true;
+  try {
+    // Arrivals first: on a cold database this records the recent history
+    // silently the first time, which is deliberate. There is no useful moment
+    // to tell a reader about a book that landed last week.
+    const known = listEvents(200);
+    const cold = !known.length;
+    for (const event of arrivals()) {
+      if (cold) { recordEvent(event); continue; }
+      await announce(event);
+    }
+
+    const queue = await downloadQueue().catch(() => []);
+    const waiting = queue.filter((item) => item.state === 'Queued');
+    const running = queue.filter((item) => item.state === 'Downloading');
+    // How long a file has been running is measured by Panel's own observations,
+    // never by Mylar's wall clock: that clock belongs to another timezone, and
+    // reading it as if it were this one reported a healthy transfer as stalled
+    // within minutes of a deploy. This also measures the right thing -- how
+    // long *we* have watched it sit there.
+    const seen = cacheRead('downloads:running')?.value ?? {};
+    const now = Date.now();
+    const stillRunning = Object.fromEntries(running.map((item) => [item.id, seen[item.id] ?? now]));
+    cacheWrite('downloads:running', stillRunning);
+    const stuck = (waiting.length && !running.length)
+      || Object.values(stillRunning).some((firstSeen) => now - firstSeen > STALL_AFTER_MS);
+    if (stuck) {
+      const recent = listEvents(50).find((event) => event.kind === 'stalled');
+      if (!recent || Date.now() - recent.at > STALL_QUIET_MS) {
+        await announce({
+          key: `stalled:${Math.floor(Date.now() / STALL_QUIET_MS)}`,
+          kind: 'stalled',
+          title: 'The download queue has stopped',
+          detail: `${waiting.length} file${waiting.length === 1 ? '' : 's'} waiting and ${
+            running.length ? 'one held for hours' : 'nothing downloading'}. Open My requests and restart the queue.`,
+        });
+      }
+    }
+  } catch (error) {
+    console.warn(`Watcher pass failed: ${error.message}`);
+  } finally {
+    watching = false;
+  }
+}
+
+setInterval(() => { watchForEvents(); }, WATCH_INTERVAL_MS).unref();
+// Not at boot: let the server start listening first, and give Mylar a moment
+// if both containers came up together.
+setTimeout(() => { watchForEvents(); }, 20_000).unref?.();
+
+app.get('/api/events', (_req, res) => {
+  res.json({ items: listEvents(10), pushing: Boolean(NOTIFY_URL) });
+});
+
+// Nothing about a request was reversible from here: a wrong pick meant opening
+// Mylar. These are the three ways out, smallest first.
+
+// One part: Mylar marks it Skipped, which is its word for "tracked but not
+// wanted". The series stays, and the part can be requested again later.
+app.post('/api/request/:comicId/part/:issueId/cancel', async (req, res, next) => {
+  const comicId = String(req.params.comicId);
+  const issueId = String(req.params.issueId);
+  if (!/^\d+$/.test(comicId) || !/^\d+$/.test(issueId)) {
+    return res.status(400).json({ error: 'A numeric series and part id are required.' });
+  }
+  try {
+    await mylar('unqueueIssue', { id: issueId });
+    await mylarParts(comicId, { refresh: true });
+    res.json({ ok: true, message: 'Panel stopped waiting for that part.' });
+  } catch (error) { next(error); }
+});
+
+// One file, mid-flight: Mylar's own abort marks the row Failed and stops it;
+// remove deletes the row outright. Abort is the safer default, and it leaves
+// evidence of what happened.
+app.post('/api/downloads/abort', async (req, res, next) => {
+  const id = String(req.body?.id ?? '').trim();
+  const mode = req.body?.remove ? 'remove' : 'abort';
+  if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'That download id is not valid.' });
+  try {
+    const result = await mylarWeb('ddl_requeue', { mode, id });
+    cache.delete('downloads:queue');
+    res.json({ ok: true, message: typeof result === 'object' && result?.message ? String(result.message) : 'Mylar stopped that download.' });
+  } catch (error) { next(error); }
+});
+
+// The whole series: Mylar forgets it and everything under it. The files it has
+// already delivered are never touched -- directory deletion is deliberately
+// not offered here, because this app has no business deleting a reader's
+// comics, and Mylar's own page is one click away for that.
+app.post('/api/request/:id/stop', async (req, res, next) => {
+  const id = requestId(req, res);
+  if (!id) return;
+  try {
+    await mylar('delComic', { id, directory: 'false' });
+    cache.delete('watchlist');
+    cache.delete('komga:series');
+    forgetMylarSeries(id);
+    res.json({ ok: true, message: 'Mylar is no longer tracking that series. Files already downloaded are untouched.' });
+  } catch (error) { next(error); }
+});
+
+// The standing sweep runs once a day at most, and after a Mylar restart the
+// next one can be two days out. This is the "look again now" the requests page
+// offers instead of waiting for it.
+app.post('/api/requests/search', async (_req, res, next) => {
+  try {
+    await mylar('forceSearch');
+    res.json({ ok: true, message: 'Mylar is searching for everything you are waiting on.' });
   } catch (error) { next(error); }
 });
 
@@ -762,8 +1067,27 @@ app.get('/api/requests', async (req, res, next) => {
     // that were actually requested -- a 192-issue watchlisted series otherwise
     // buries the two volumes you really are waiting on.
     const items = listMylarParts().filter((part) => String(part.status || '').toLowerCase() !== 'skipped');
+    // Waiting parts carry Mylar's own "asked for on" date; Panel's copy only
+    // knows when it last polled, which is not the same question.
+    const asked = wantedSince();
+    const present = await komgaShelf();
+    const shaped = items.map((part) => {
+      const found = present.get(shelfKey(part.series));
+      return {
+        ...part,
+        ...(asked.has(part.issueId) ? { wantedSince: asked.get(part.issueId) } : {}),
+        // Where to actually read it. The request list is the only place a
+        // reader sees a finished book, so it is the place that has to offer.
+        readUrl: found?.id ? `${komgaPublicUrl}/series/${encodeURIComponent(found.id)}` : null,
+      };
+    });
     res.json({
-      items, counts: requestSummary(items), refreshed: req.query.refresh === '1',
+      items: shaped, counts: requestSummary(items), refreshed: req.query.refresh === '1',
+      // Null when Mylar's database is not readable from here: the page then
+      // says nothing about searching rather than guessing at it. `waiting` is
+      // Mylar's own count, not Panel's copy of it -- a part queued from another
+      // device, or before Panel last polled, is still a part nothing has found.
+      search: searchState() && { ...searchState(), waiting: asked.size },
       explanation: {
         Wanted: 'Panel asked Mylar to search this part. It is waiting on Mylar’s indexers and download client.',
         Snatched: 'Mylar found a release and handed it to the download client.',
@@ -2158,6 +2482,9 @@ app.get('/api/volume/:id', async (req, res, next) => {
     rememberObjects('volume', data);
     enqueueEnrichment('volume', id, 'opened'); wakeEnrichment();
     const shaped = catalogueShape(data, new Set(watched.map((x) => x.id)));
+    // Requesting something you already own is the easiest mistake this app can
+    // let you make, and the most expensive: these are four-gigabyte books.
+    shaped.owned = await ownedTitle(shaped.title);
     // Credits are ordered by ComicVine's own prominence, so the first few are
     // the ones a reader would recognise.
     shaped.creators = (data.people ?? []).slice(0, 8)
@@ -2216,7 +2543,12 @@ app.get('/api/request/:id/options', async (req, res, next) => {
   const id = requestId(req, res);
   if (!id) return;
   try {
-    res.json(await mylarParts(id));
+    const [parts, queued] = await Promise.all([mylarParts(id), queuedFor(id)]);
+    // Both answers a reader needs before choosing parts: whether this book is
+    // already on the shelf, and whether it is already on its way. Neither
+    // blocks the request -- a second copy is sometimes exactly what is wanted
+    // -- but neither should be a surprise afterwards.
+    res.json({ ...parts, owned: await ownedTitle(getVolume(id)?.name), queued });
   } catch (error) { next(error); }
 });
 

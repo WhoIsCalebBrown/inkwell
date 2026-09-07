@@ -84,6 +84,26 @@ db.exec(`CREATE TABLE IF NOT EXISTS mylar_parts (
   PRIMARY KEY (comic_id, issue_id)
 )`);
 db.exec('CREATE INDEX IF NOT EXISTS mylar_parts_comic_idx ON mylar_parts(comic_id, number)');
+// Things that happened while nobody was looking. A single-user server that has
+// to be watched to be useful is not much of a server: this is what the page
+// can show on the reader's return, and what gets pushed if a notify URL is
+// set. `key` is what makes an event happen once -- the watcher re-reads the
+// same rows every few minutes and must not announce them twice.
+db.exec(`CREATE TABLE IF NOT EXISTS events (
+  key TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT,
+  at INTEGER NOT NULL,
+  when_local TEXT
+)`);
+// `at` is Panel's own clock -- when it noticed. `when_local` is Mylar's wall
+// clock verbatim, for events that come from Mylar's records: it is written in
+// Mylar's timezone, which this container does not share and the reader's
+// browser does. Displaying the former for a Mylar event is how a book that
+// arrived at noon came to be listed at eight in the morning.
+try { db.exec('ALTER TABLE events ADD COLUMN when_local TEXT'); } catch { /* already there */ }
+db.exec('CREATE INDEX IF NOT EXISTS events_at_idx ON events(at DESC)');
 db.exec(`CREATE TABLE IF NOT EXISTS catalogue_covers (
   volume_id TEXT PRIMARY KEY,
   source_url TEXT NOT NULL,
@@ -185,6 +205,12 @@ const upsertMylarPart = db.prepare(`INSERT INTO mylar_parts (comic_id, issue_id,
   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(comic_id, issue_id) DO UPDATE SET number=excluded.number,
   name=excluded.name, status=excluded.status, updated_at=excluded.updated_at`);
 const updateMylarPart = db.prepare('UPDATE mylar_parts SET status = ?, updated_at = ? WHERE comic_id = ? AND issue_id = ?');
+const selectEvent = db.prepare('SELECT key FROM events WHERE key = ?');
+const insertEvent = db.prepare('INSERT INTO events (key, kind, title, detail, at, when_local) VALUES (?, ?, ?, ?, ?, ?)');
+const selectEvents = db.prepare('SELECT key, kind, title, detail, at, when_local FROM events ORDER BY at DESC LIMIT ?');
+const trimEvents = db.prepare('DELETE FROM events WHERE key NOT IN (SELECT key FROM events ORDER BY at DESC LIMIT 200)');
+const deleteMylarParts = db.prepare('DELETE FROM mylar_parts WHERE comic_id = ?');
+const deleteMylarSeries = db.prepare('DELETE FROM mylar_series WHERE comic_id = ?');
 const selectCover = db.prepare('SELECT source_url, file_name, mime_type, byte_size, fetched_at FROM catalogue_covers WHERE volume_id = ?');
 const selectRequestParts = db.prepare(`SELECT p.comic_id, p.issue_id, p.number, p.name, p.status, p.updated_at,
   s.name AS series_name, s.publisher, s.year
@@ -589,6 +615,41 @@ export function getMylarParts(comicId) {
 
 export function setMylarPartStatus(comicId, issueId, status) {
   updateMylarPart.run(String(status), Date.now(), String(comicId), String(issueId));
+}
+
+// Mylar has been told to forget this series; Panel's copy of its parts is now
+// a fiction. Only the mirror of Mylar's state goes -- the catalogue entry and
+// its covers are ComicVine's, and the reader may well request it again.
+// Returns false when this exact event was already recorded, so a caller can
+// skip the push without a second lookup.
+export function recordEvent({ key, kind, title, detail = null, at = Date.now(), whenLocal = null }) {
+  const existing = selectEvent.get(String(key));
+  if (existing) return false;
+  insertEvent.run(String(key), String(kind), String(title), detail == null ? null : String(detail),
+    Number(at), whenLocal == null ? null : String(whenLocal));
+  // A log nobody prunes becomes a table nobody reads. Recent history is all
+  // this is for; Mylar keeps the authoritative record.
+  trimEvents.run();
+  return true;
+}
+
+export function listEvents(limit = 12) {
+  return selectEvents.all(Math.min(100, Math.max(1, Number(limit) || 12))).map((row) => ({
+    key: row.key, kind: row.kind, title: row.title, detail: row.detail,
+    at: Number(row.at), whenLocal: row.when_local ?? null,
+  }));
+}
+
+export function forgetMylarSeries(comicId) {
+  db.exec('BEGIN');
+  try {
+    deleteMylarParts.run(String(comicId));
+    deleteMylarSeries.run(String(comicId));
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function listMylarParts() {

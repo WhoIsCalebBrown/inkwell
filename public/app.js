@@ -1298,7 +1298,9 @@ function downloadsHtml(data) {
       <span class="kicker state${item.state === 'Completed' ? ' owned' : item.state === 'Failed' ? ' attention' : ''}">${esc(item.label)}</span>
       <small>${esc(item.changed ? `${sinceLabel(item.changed)} in this state` : '')}</small>
     </div>
-    ${item.state === 'Completed' ? '' : `<button class="secondary" data-retry-download="${esc(item.id)}">Restart</button>`}
+    ${item.state === 'Completed' ? '' : `<div class="download-actions">
+      <button class="secondary" data-retry-download="${esc(item.id)}">Restart</button>
+      <button class="secondary quiet" data-abort-download="${esc(item.id)}">Stop</button></div>`}
   </div>`;
 
   return `<div class="section-head"><span class="kicker no">01</span><h2>Downloads</h2>
@@ -1354,14 +1356,139 @@ async function restartDownloads(id, button) {
   }
 }
 
+// A request that has found nothing looks exactly like one that is working:
+// both say "Queued" and neither moves. The difference is whether anything has
+// looked lately -- and Mylar's standing sweep runs once a day at most, so after
+// a restart the next one can be two days out. Say that, and offer the search.
+const relativeTime = (iso) => {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return '';
+  const minutes = Math.round((Date.now() - at) / 60_000);
+  const ago = minutes >= 0;
+  const size = Math.abs(minutes);
+  const text = size < 90 ? `${size || 1} min`
+    : size < 36 * 60 ? `${Math.round(size / 60)} hr`
+    : `${Math.round(size / 1440)} days`;
+  return ago ? `${text} ago` : `in ${text}`;
+};
+
+function searchStateHtml(activity) {
+  const search = activity.search;
+  // Mylar's own count of what it is still looking for, which can be larger
+  // than Panel's list: a part queued elsewhere is still a part nothing has
+  // found. Nothing honest to say when Mylar's record is not readable from here.
+  const waiting = search?.waiting ?? 0;
+  if (!search || !waiting) return '';
+  const providers = search.providers.length;
+  const next = search.sweepPaused
+    ? 'Mylar’s scheduled search is paused, so nothing will look again on its own.'
+    : search.nextSweep
+      ? `Mylar looks again ${relativeTime(search.nextSweep)}.`
+      : 'Mylar has no scheduled search on the books.';
+  return `<div class="search-state">
+    <div><b>${plural(waiting, 'part')} waiting on a search.</b>
+      <p>${providers ? `${plural(providers, 'provider')} tried, most recently ${esc(relativeTime(search.lastRun))}. Nothing matched.` : 'No providers have run yet.'} ${esc(next)}</p></div>
+    <button class="secondary" data-search-now>Search now</button>
+  </div>`;
+}
+
+// "2026-09-07 11:58:12" from Mylar, or Panel's own epoch for the things Panel
+// itself noticed. Either way it is rendered on the reader's clock.
+function eventWhen(event) {
+  const at = event.whenLocal ? mylarTime(event.whenLocal) : new Date(event.at);
+  if (!at || Number.isNaN(at.getTime())) return '';
+  const today = new Date().toDateString() === at.toDateString();
+  return today
+    ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    : at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// What happened while you were not looking. Deliberately short: this is a
+// reassurance, not a log to be read.
+function activityHtml(events) {
+  if (!events?.items?.length) return '';
+  return `<section class="request-activity">
+    <div class="section-head"><span class="kicker no">03</span><h2>Recently</h2>
+      <span class="kicker aside">${events.pushing ? 'Also pushed to your notifier' : 'Panel is not pushing these anywhere'}</span></div>
+    <div class="event-list">${events.items.slice(0, 6).map((event) => `<div class="event-row${event.kind === 'stalled' ? ' warn' : ''}">
+      ${/* Mylar's own wall clock when it has one: this browser shares that
+             timezone and the server does not. */ ''}
+      <span class="kicker">${esc(eventWhen(event))}</span>
+      <div><b>${esc(event.title)}</b>${event.detail ? `<small>${esc(event.detail)}</small>` : ''}</div>
+    </div>`).join('')}</div>
+  </section>`;
+}
+
+async function searchNow(button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Searching…';
+  try {
+    const { message } = await api('/api/requests/search', { method: 'POST' });
+    toast(message || 'Mylar is searching.');
+  } catch (error) { toast(error.message, 'error'); }
+  button.disabled = false;
+  button.textContent = original;
+}
+
+async function cancelPart(comicId, issueId, button) {
+  button.disabled = true;
+  button.textContent = 'Cancelling…';
+  try {
+    const { message } = await api(`/api/request/${encodeURIComponent(comicId)}/part/${encodeURIComponent(issueId)}/cancel`, { method: 'POST' });
+    toast(message || 'Cancelled.');
+    render();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'Cancel';
+    toast(error.message, 'error');
+  }
+}
+
+// The one action here that throws work away, so it asks first. Files already
+// downloaded are never touched -- the server refuses to pass a delete on.
+async function stopSeries(comicId, name, button) {
+  if (!window.confirm(`Stop tracking ${name}? Mylar forgets the series and its parts. Anything already downloaded stays in your library.`)) return;
+  button.disabled = true;
+  button.textContent = 'Stopping…';
+  try {
+    const { message } = await api(`/api/request/${encodeURIComponent(comicId)}/stop`, { method: 'POST' });
+    toast(message || 'Mylar is no longer tracking that series.');
+    render();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'Stop tracking';
+    toast(error.message, 'error');
+  }
+}
+
+async function abortDownload(id, button) {
+  button.disabled = true;
+  button.textContent = 'Stopping…';
+  try {
+    const { message } = await api('/api/downloads/abort', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    });
+    toast(message || 'Mylar stopped that download.');
+    const slot = document.querySelector('#downloads');
+    if (slot) setTimeout(() => downloadsPanel(slot), 1500);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'Stop';
+    toast(error.message, 'error');
+  }
+}
+
 routes.library = async () => {
   view.innerHTML = `<section class="lede" style="border:0"><span class="kicker" style="color:var(--accent)">Your shelf</span>
     <h1>What you asked for,<br />and what <em>arrived</em>.</h1></section>${skeletons(1, '1fr')}`;
-  const [{ items, counts, komga }, activity] = await Promise.all([loadShelf(), api('/api/requests')]);
+  const [{ items, counts, komga }, activity, events] = await Promise.all([
+    loadShelf(), api('/api/requests'), api('/api/events').catch(() => ({ items: [] })),
+  ]);
   const requestState = (status) => ({ Wanted: 'Queued', Snatched: 'Snatched', Downloaded: 'Downloaded', Archived: 'In library', Failed: 'Needs attention', Skipped: 'Not requested' }[status] || status);
   const groups = [...activity.items.reduce((map, part) => {
     const key = part.comicId;
-    if (!map.has(key)) map.set(key, { comicId: key, series: part.series, publisher: part.publisher, year: part.year, parts: [] });
+    if (!map.has(key)) map.set(key, { comicId: key, series: part.series, publisher: part.publisher, year: part.year, readUrl: part.readUrl || null, parts: [] });
     map.get(key).parts.push(part); return map;
   }, new Map()).values()];
   view.innerHTML = `
@@ -1382,6 +1509,7 @@ routes.library = async () => {
         <span class="kicker aside">${activity.counts.snatched} snatched · ${activity.counts.wanted} queued · ${activity.counts.failed} need attention</span>
         <button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>
       <p class="request-explainer">Panel queues only the parts you selected. Mylar searches your indexers; <em>Snatched</em> means it reached the download client, and Komga marks it readable after import.</p>
+      ${searchStateHtml(activity)}
       <div class="request-center">${groups.map((group) => `<article class="request-series">
         ${/* Mylar's comic id is the ComicVine volume id, so the cover Panel
                already has on disk is addressable. coverHtml falls back to the
@@ -1391,7 +1519,11 @@ routes.library = async () => {
             ${coverHtml({ id: group.comicId, title: group.series, cover: `/api/cover/${encodeURIComponent(group.comicId)}` })}
           </button>
           <div><span class="kicker">Mylar watchlist</span><h3>${esc(group.series)}</h3><p>${esc([group.publisher, group.year].filter(Boolean).join(' · '))}</p></div>
-          <button class="secondary" data-request="${esc(group.comicId)}">Manage parts</button></div>
+          <div class="request-series-actions">
+            ${group.readUrl ? `<a class="secondary" href="${esc(group.readUrl)}" target="_blank" rel="noreferrer">Read</a>` : ''}
+            <button class="secondary" data-request="${esc(group.comicId)}">Manage parts</button>
+            <button class="secondary quiet" data-stop-series="${esc(group.comicId)}" data-series-name="${esc(group.series)}">Stop tracking</button>
+          </div></div>
         ${/* A watchlisted run can carry a hundred parts. Show a readable
                handful and let the reader unfurl the rest. */ ''}
         <div class="request-parts" data-parts-for="${esc(group.comicId)}">${group.parts.map((part, index) => {
@@ -1399,14 +1531,24 @@ routes.library = async () => {
           return `<div class="request-part${index >= REQUEST_PARTS_SHOWN ? ' extra' : ''}"${index >= REQUEST_PARTS_SHOWN ? ' hidden' : ''}>
             <div><span class="kicker">${esc(part.number || '—')}</span>
               <b data-part-title="${esc(part.number || '')}">${esc(part.name || `Part ${part.number}`)}</b>
-              <small data-part-blurb="${esc(part.number || '')}"></small></div>
+              <small data-part-blurb="${esc(part.number || '')}"></small>
+              ${part.wantedSince ? `<small class="waiting-since">Asked for ${esc(part.wantedSince)}</small>` : ''}</div>
             <div class="request-part-action"><span class="kicker state ${['Downloaded', 'Archived'].includes(part.status) ? 'owned' : part.status === 'Failed' ? 'attention' : ''}">${esc(requestState(part.status))}</span>
-              ${canRetry ? `<button class="secondary" data-retry-part="${esc(part.comicId)}/${esc(part.issueId)}">${part.status === 'Failed' ? 'Retry now' : 'Search again'}</button>` : ''}</div></div>`;
+              ${canRetry ? `<button class="secondary" data-retry-part="${esc(part.comicId)}/${esc(part.issueId)}">${part.status === 'Failed' ? 'Retry now' : 'Search again'}</button>` : ''}
+              ${part.status === 'Wanted' ? `<button class="secondary quiet" data-cancel-part="${esc(part.comicId)}/${esc(part.issueId)}">Cancel</button>` : ''}</div></div>`;
         }).join('')}</div>
         ${group.parts.length > REQUEST_PARTS_SHOWN ? `<button class="request-unfurl kicker" data-unfurl="${esc(group.comicId)}">
           Show all ${group.parts.length} parts ↓</button>` : ''}
       </article>`).join('')}</div>
-    </section>` : `<section class="request-activity"><div class="section-head"><span class="kicker no">02</span><h2>Requests</h2></div><div class="empty">Choose a specific issue or volume and it will appear here with Mylar’s progress.</div></section>`}
+    </section>` : `<section class="request-activity">
+      <div class="section-head"><span class="kicker no">02</span><h2>Requests</h2>
+        <button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>
+      ${/* The search state belongs here too, and this is where it matters most:
+             Mylar can be waiting on parts this device has never listed. */ ''}
+      ${searchStateHtml(activity)}
+      <div class="empty">Choose a specific issue or volume and it will appear here with Mylar’s progress.
+        ${activity.search?.waiting ? 'Mylar is already waiting on parts requested elsewhere — <b>Refresh from Mylar</b> brings them in.' : ''}</div></section>`}
+    ${activityHtml(events)}
     ${komga ? '' : '<p class="kicker" style="color:var(--accent);padding-bottom:14px">Komga is not connected — every title will read as searching.</p>'}
     <div class="index">${items.map((item, i) => `
       <div class="row">
@@ -1418,6 +1560,7 @@ routes.library = async () => {
         </div>
         <span class="kicker state ${item.inLibrary ? 'owned' : ''}">${esc(item.state)}${
           item.books ? ` · ${item.books}` : ''}</span>
+        ${item.readUrl ? `<a class="kicker read-link" href="${esc(item.readUrl)}" target="_blank" rel="noreferrer">Read ↗</a>` : ''}
       </div>`).join('')}</div>`;
 
   // After paint, never before it.
@@ -1575,8 +1718,14 @@ async function openVolume(id) {
                   ${owned ? (shelfFlag(item) || 'Requested') : 'Request'}
                  </button>`}
             ${isCollection ? '' : `<button class="secondary" data-request-watch="${esc(item.id)}">Follow this series</button>`}
+            ${/* The end of the whole journey. If it is already on the shelf,
+                  the most useful button on this sheet is the one that opens
+                  it. */ ''}
+            ${item.owned?.readUrl ? `<a class="secondary" href="${esc(item.owned.readUrl)}" target="_blank" rel="noreferrer">Read in Komga ↗</a>` : ''}
             ${externalUrl(item.url) ? `<a class="kicker" href="${esc(externalUrl(item.url))}" target="_blank" rel="noreferrer">View on ComicVine ↗</a>` : ''}
           </div>
+          ${item.owned ? `<p class="picker-note owned">Already on your shelf${
+            item.owned.books ? ` — ${plural(item.owned.books, 'book')}${item.owned.unread ? `, ${item.owned.unread} unread` : ''}` : ''}.</p>` : ''}
           <p class="action-scope"><b>Request</b> ${esc(requestScope)}${isCollection ? ''
             : ' <b>Follow this series</b> adds it to Mylar’s watchlist and keeps taking every future issue.'}</p>
           ${canChooseParts ? `<div id="collection-request" class="collection-request" data-part-noun="${partNoun}" data-collection="${isCollection}"></div>` : ''}
@@ -1623,8 +1772,16 @@ function renderPartPicker(id, options) {
   // selective, and "I want all of it" is what Follow this series means. Either
   // way the head copy says which it is, so the default is never a surprise.
   const preselect = slot.dataset.collection === 'true';
+  // Two things worth knowing before choosing, neither of them a refusal: a
+  // second copy is occasionally the point, and Panel does not get to decide.
+  const owned = options.owned ? `<p class="picker-note owned">Already on your shelf in Komga${
+    options.owned.books ? ` — ${plural(options.owned.books, 'book')}` : ''}. ${
+    options.owned.readUrl ? `<a href="${esc(options.owned.readUrl)}" target="_blank" rel="noreferrer">Read it</a> instead, or request it again if you want another copy.` : ''}</p>` : '';
+  const queued = options.queued?.length ? `<p class="picker-note">Already in the download queue: ${
+    options.queued.map((item) => `${esc(item.title)}${item.size ? ` (${esc(item.size)})` : ''}`).join(', ')}.</p>` : '';
   slot.innerHTML = `<section class="part-picker">
     <div class="part-picker-head"><span class="kicker" style="color:var(--accent)">${preselect ? 'Confirm' : 'Choose'} ${esc(noun)}s</span>
+      ${owned}${queued}
       <p>${preselect
         ? `All ${parts.filter((part) => part.requestable).length} selected. Uncheck anything you want to skip.`
         : `Pick the ${esc(noun)}s you want. To take every future one instead, use <b>Follow this series</b>.`}</p></div>
@@ -1861,6 +2018,19 @@ document.addEventListener('click', async (event) => {
       : `Show all ${slot.querySelectorAll('.request-part').length} parts ↓`;
     return;
   }
+  const searchNowButton = event.target.closest('[data-search-now]');
+  if (searchNowButton && !searchNowButton.disabled) return searchNow(searchNowButton);
+  const cancelPartButton = event.target.closest('[data-cancel-part]');
+  if (cancelPartButton && !cancelPartButton.disabled) {
+    const [comicId, issueId] = cancelPartButton.dataset.cancelPart.split('/');
+    return cancelPart(comicId, issueId, cancelPartButton);
+  }
+  const stopSeriesButton = event.target.closest('[data-stop-series]');
+  if (stopSeriesButton && !stopSeriesButton.disabled) {
+    return stopSeries(stopSeriesButton.dataset.stopSeries, stopSeriesButton.dataset.seriesName, stopSeriesButton);
+  }
+  const abortButton = event.target.closest('[data-abort-download]');
+  if (abortButton && !abortButton.disabled) return abortDownload(abortButton.dataset.abortDownload, abortButton);
   const restartQueue = event.target.closest('[data-restart-queue]');
   if (restartQueue && !restartQueue.disabled) return restartDownloads('', restartQueue);
   const retryDownload = event.target.closest('[data-retry-download]');

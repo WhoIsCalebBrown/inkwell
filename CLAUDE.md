@@ -115,13 +115,45 @@ nothing in the log after the restart. From the request list that is
 indistinguishable from a search that never found anything. It had 12 files
 wedged behind one dead row for a day before Panel could see it.
 
-`updated_date` is written in Mylar's local time, which the browser shares and
-the container does not. Parse it in the front end, never on the server.
+Its SQLite (`/run/mylar/mylar.db`, mounted read-only) carries the rest: which
+providers have searched and when (`provider_searches`), when the standing sweep
+next runs (`jobhistory`), what is Wanted and since when (`issues`), and what has
+been post-processed (`snatched`, which Panel uses as the arrival bell). It is
+`journal_mode=delete`, so a reader needs no write access to the file or its
+directory — which is what makes the `:ro` mount into a read-only container work.
+Every read degrades to null when the file is absent, as it is in local
+development.
+
+**Mylar's timestamps are inconsistent and it matters.** `ddl_info.updated_date`
+is local wall clock; `jobhistory` is UTC; `next_run_timestamp` is a real epoch
+for some jobs and a UTC datetime string for others. The server normalises what
+it reads from SQLite to an ISO instant (`instant()`); the DDL queue's local
+times are parsed in the browser, which shares Mylar's clock, and never on the
+server, which does not.
 
 GetComics mirrors are tried in `ddl_priority_order` (mega, mediafire,
 pixeldrain, main). Mega commonly answers `ETOOMANY` for hours at a time; Mylar
 falls through to the next mirror on its own, so a Mega failure in the log is
 not a fault to fix.
+
+## Events, and why the server has a watcher
+
+Panel used to be a page you had to visit; that is how a wedged download queue
+went unnoticed for a day. `watchForEvents()` runs every five minutes, reads only
+what Mylar has already written, and turns two things into events: a book
+post-processed (`snatched`), and a queue that has stopped. Events are recorded
+once — `key` is what makes that true — shown on My requests, and pushed to
+`PANEL_NOTIFY_URL` if one is set (Discord shape when the URL is a Discord
+webhook, otherwise ntfy's body-plus-Title; `PANEL_NOTIFY_FORMAT` overrides).
+
+On an empty events table the first pass records silently. There is no useful
+moment to tell a reader about a book that landed last week.
+
+**Stall detection must never use Mylar's clock.** How long a file has been
+downloading is measured from Panel's own observations, kept in `downloads:running`
+in the cache. Reading `ddl_info.updated_date` as if it were this container's
+local time reported a perfectly healthy 3GB transfer as stalled, minutes after a
+deploy.
 
 ## Performance rules
 
