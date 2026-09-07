@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cached, eager, read as cacheRead } from './store.js';
+import * as metron from './metron.js';
 
 const app = express();
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -227,7 +228,17 @@ async function shelf() {
 
 app.use(express.json({ limit: '32kb' }));
 app.get('/api/health', async (_req, res) => {
-  try { res.json({ ok: true, watchlist: (await watchlist()).length, komga: Boolean(komgaUrl && komgaAuth) }); }
+  try {
+    res.json({
+      ok: true,
+      watchlist: (await watchlist()).length,
+      komga: Boolean(komgaUrl && komgaAuth),
+      // Reports reachability, not just configuration: Metron blocks an IP
+      // outright for bursty traffic, and that should be visible here rather
+      // than showing up as quietly missing data.
+      metron: await metron.status(),
+    });
+  }
   catch (error) { res.status(503).json({ ok: false, error: error.message }); }
 });
 
