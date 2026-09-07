@@ -1,4 +1,4 @@
-// Panel — a front-end for the Publisher → Line → Thread → Volume model.
+// Inkwell — a front-end for the Publisher → Line → Thread → Volume model.
 // A "thread" is whatever a reader follows: a character for superhero books,
 // a creator for manga and creator-owned work, a team or an event where those fit.
 
@@ -52,19 +52,19 @@ const GLOSSARY = {
 // Two different kinds of not-knowing, and they need different answers.
 // GLOSSARY is vocabulary the comics industry owns: a reader may simply never
 // have met the word "omnibus". SOURCES is where a list on this page came from
-// and how it was matched — Panel's own workings, published rather than
+// and how it was matched — Inkwell's own workings, published rather than
 // implied. A reader who can see that a shelf is a name match and not a
 // name match and not a recorded fact can tell us it is wrong and say why;
 // without that, the only available complaint is "this looks random".
 const SOURCES = {
-  'connected books': 'Books whose ComicVine record names this person — in its list of who made the book, or who appears in it. Panel never guesses from a title: if a book is here, ComicVine put the name on it.',
+  'connected books': 'Books whose ComicVine record names this person — in its list of who made the book, or who appears in it. Inkwell never guesses from a title: if a book is here, ComicVine put the name on it.',
   'team books': 'ComicVine records who appears in a book one character at a time and never by team, so these are series whose title matches the team’s name. That is a weaker match than a name on a record, and it can catch an unrelated book with the same words in it.',
   'core roster': 'Wikidata’s line-up for this team: a short, edited list of who is in it. ComicVine’s own list runs to hundreds of names across every era, which is why it is kept separate below.',
   'recorded members': 'Everyone ComicVine has ever filed as a member of this team, across every era. Long, unordered, and useful for finding somebody you half-remember.',
-  lore: 'Wikidata — the open database behind Wikipedia’s infoboxes. Only what it states outright: who created the character, which universe they belong to, their teams and family. Panel works nothing out for itself here.',
+  lore: 'Wikidata — the open database behind Wikipedia’s infoboxes. Only what it states outright: who created the character, which universe they belong to, their teams and family. Inkwell works nothing out for itself here.',
   requests: 'Your Mylar watchlist, joined with what Komga has actually imported. Mylar reports what it is looking for and downloading; Komga is the proof a book arrived and can be read.',
   downloads: 'Mylar’s direct-download queue, read from its own queue page. Mylar reports a state and a size but never a byte count, so there is no percentage to show — how long a file has held its state is the honest signal.',
-  recently: 'Books Mylar finished and imported, and any time its download queue stopped moving. Panel checks every five minutes so this is here when you come back.',
+  recently: 'Books Mylar finished and imported, and any time its download queue stopped moving. Inkwell checks every five minutes so this is here when you come back.',
   'still waiting': 'Which of your indexers Mylar has tried, when it last tried, and when it is next scheduled to. Read from Mylar’s own database.',
   publishers: 'A fixed list of houses and their imprints, with cover art taken from books already in your local catalogue. No provider call is made to draw this page.',
   eras: 'Grouped by the year each book was published, from your own catalogue. Nothing external is consulted.',
@@ -73,10 +73,10 @@ const SOURCES = {
   'browse characters': 'Curated well-known names first, then whoever else your own catalogue has learned from books you have opened.',
   'browse creators': 'A curated list of notable writers and artists, looked up once in ComicVine and then kept.',
   'all titles': 'Every volume ComicVine files under this publisher, newest first. The list of ids comes from the publisher’s own record, then a page at a time is filled in with details.',
-  'universes & imprints': 'Publishing lines within this house, as Panel has them written down. Choosing one filters the catalogue below by imprint.',
-  'search results': 'ComicVine’s search, re-ranked by Panel: an exact title wins, then all of your words, then a publisher or year you named. Your local catalogue answers first and is topped up from ComicVine.',
-  'local catalogue': 'Everything Panel has kept from providers, on disk. It grows only from things you searched, opened, followed or requested — Panel never crawls.',
-  'good places to start': 'Curated starting points, filled from books already in your catalogue. They are a way in, not a recommendation engine — Panel does not track what you read.',
+  'universes & imprints': 'Publishing lines within this house, as Inkwell has them written down. Choosing one filters the catalogue below by imprint.',
+  'search results': 'ComicVine’s search, re-ranked by Inkwell: an exact title wins, then all of your words, then a publisher or year you named. Your local catalogue answers first and is topped up from ComicVine.',
+  'local catalogue': 'Everything Inkwell has kept from providers, on disk. It grows only from things you searched, opened, followed or requested — Inkwell never crawls.',
+  'good places to start': 'Curated starting points, filled from books already in your catalogue. They are a way in, not a recommendation engine — Inkwell does not track what you read.',
   'request scope': 'What pressing Request will actually hand to Mylar, spelled out before you press it. Nothing is queued until you confirm a selection.',
   'created by': 'The writers and artists ComicVine lists on this book’s own record. Opening one shows every other book its record names them on.',
   featuring: 'The characters ComicVine lists on this book’s record. It describes the book as a whole, not each issue inside it — a name here does not mean they appear on every page.',
@@ -104,15 +104,28 @@ const term = (text, key = text) => {
 
 /* ---------------- poster size ---------------- */
 
+// The storage prefix changed with the name. A reader's poster size, page size,
+// filters and the flags recording which ledes they have already read are worth
+// more than a tidy key, so the old ones are carried across once rather than
+// abandoned — otherwise the rename silently resets every device and replays
+// every first-visit veil.
+try {
+  for (const key of Object.keys(localStorage).filter((name) => name.startsWith('panel:'))) {
+    const moved = `inkwell:${key.slice('panel:'.length)}`;
+    if (localStorage.getItem(moved) === null) localStorage.setItem(moved, localStorage.getItem(key));
+    localStorage.removeItem(key);
+  }
+} catch { /* private mode, or storage disabled entirely */ }
+
 const poster = document.querySelector('#poster');
 function setPoster(px, persist = true) {
   const size = Math.min(320, Math.max(110, Number(px) || 150));
   document.documentElement.style.setProperty('--poster', `${size}px`);
   poster.value = String(size);
   // Per-device preference; a phone and a desk monitor want different answers.
-  if (persist) { try { localStorage.setItem('panel:poster', String(size)); } catch { /* private mode */ } }
+  if (persist) { try { localStorage.setItem('inkwell:poster', String(size)); } catch { /* private mode */ } }
 }
-try { setPoster(localStorage.getItem('panel:poster') ?? 150, false); } catch { setPoster(150, false); }
+try { setPoster(localStorage.getItem('inkwell:poster') ?? 150, false); } catch { setPoster(150, false); }
 poster.addEventListener('input', (event) => setPoster(event.target.value));
 
 // How many titles a page shows. Kept beside poster size because they are the
@@ -120,21 +133,21 @@ poster.addEventListener('input', (event) => setPoster(event.target.value));
 const PAGE_SIZES = [24, 48, 72, 96];
 function pageSize() {
   try {
-    const stored = Number(localStorage.getItem('panel:pagesize'));
+    const stored = Number(localStorage.getItem('inkwell:pagesize'));
     return PAGE_SIZES.includes(stored) ? stored : 48;
   } catch { return 48; }
 }
 function setPageSize(value) {
-  try { localStorage.setItem('panel:pagesize', String(value)); } catch { /* private mode */ }
+  try { localStorage.setItem('inkwell:pagesize', String(value)); } catch { /* private mode */ }
 }
 
-// Panel preferences deliberately live in the browser. They affect this reader's
+// Inkwell preferences deliberately live in the browser. They affect this reader's
 // presentation and request flow, not Mylar/Komga's global configuration.
 const setting = (name, fallback) => {
-  try { return localStorage.getItem(`panel:${name}`) ?? fallback; } catch { return fallback; }
+  try { return localStorage.getItem(`inkwell:${name}`) ?? fallback; } catch { return fallback; }
 };
 const setSetting = (name, value) => {
-  try { localStorage.setItem(`panel:${name}`, String(value)); } catch { /* private mode */ }
+  try { localStorage.setItem(`inkwell:${name}`, String(value)); } catch { /* private mode */ }
 };
 const settingOn = (name, fallback = false) => setting(name, String(fallback)) === 'true';
 function applyAccessibility() {
@@ -445,7 +458,7 @@ routes.discover = async () => {
           ${stackedArt(art.map((item) => item.cover),
             initialsOf(path.title))}
           <div class="path-copy"><span class="kicker" style="color:var(--accent)">Starter path</span><h3>${esc(path.title)}</h3>
-            <p>${path.items.length ? `${path.items.length} saved titles to explore.` : 'Search this path to start teaching Panel about it.'}</p>
+            <p>${path.items.length ? `${path.items.length} saved titles to explore.` : 'Search this path to start teaching Inkwell about it.'}</p>
             <button class="secondary" ${path.hub ? `data-hub="${esc(path.hub)}"` : `data-search="${esc(path.search)}"`}>Explore →</button></div>
         </article>`;
       }).join('')}</div>`;
@@ -580,7 +593,7 @@ routes.hub = async (id) => {
   if (!hub) throw new Error('That browse collection is not available.');
   const copy = {
     'creator-owned': 'Stories led by their creators rather than a shared superhero universe. Start anywhere — each series is its own world.',
-  }[id] || 'A local shelf of titles Panel has learned from your browsing.';
+  }[id] || 'A local shelf of titles Inkwell has learned from your browsing.';
   view.innerHTML = `<section class="lede"><span class="kicker" style="color:var(--accent)">Browse without a keyword</span>
     <h1>${esc(hub.title)}</h1><p>${esc(copy)}</p></section>
     <div class="section-head"><span class="kicker no">01</span><h2>Start anywhere</h2>
@@ -588,7 +601,7 @@ routes.hub = async (id) => {
     ${filterBar(hub.items.length, applyContentFilter(hub.items).length)}
     ${applyContentFilter(hub.items).length
       ? `<div class="grid">${applyContentFilter(hub.items).map(volumeCard).join('')}</div>`
-      : `<div class="empty">Panel has not learned any titles for this collection yet. Search for a book you already know, then this hub will grow naturally.</div>`}`;
+      : `<div class="empty">Inkwell has not learned any titles for this collection yet. Search for a book you already know, then this hub will grow naturally.</div>`}`;
 };
 
 /* ---------------- browse ---------------- */
@@ -596,7 +609,7 @@ routes.hub = async (id) => {
 // A cold catalogue resolves its curated names one paced request at a time, so
 // a rail can answer while it is still half a list. Come back for the rest
 // instead of leaving the reader looking at the single card that happened to be
-// cached -- that state read as "Panel knows one team", which is not the truth.
+// cached -- that state read as "Inkwell knows one team", which is not the truth.
 const SEED_POLL_MS = 4000;
 const SEED_POLL_TRIES = 24;
 
@@ -857,7 +870,7 @@ routes.threads = async () => {
   if (!groups.length) {
     // An action, not an explanation of how the local catalogue fills up.
     view.innerHTML += `<div class="empty">
-      <p>Nothing filed yet. Open a publisher and Panel will start learning who its
+      <p>Nothing filed yet. Open a publisher and Inkwell will start learning who its
          characters and creators are.</p>
       <button class="secondary" data-route="browse">Browse publishers →</button>
     </div>`;
@@ -1184,7 +1197,7 @@ routes.thread = async (kind, id, encodedName) => {
   state.thread = { kind, id, name: thread.name, publisher: thread.publisher };
   const stat = (label, value) => value
     ? `<div><span class="kicker">${label}</span><b class="disp">${esc(value)}</b></div>` : '';
-  // "Thread" is Panel's word for the tier, not the reader's. Say what this is.
+  // "Thread" is Inkwell's word for the tier, not the reader's. Say what this is.
   const kindLabel = { person: 'Creator', story_arc: 'Event', team: 'Team' }[thread.kind] || 'Character';
   // ComicVine's character-team field is both noisy and a subset of the
   // Wikidata affiliation graph below. Showing it first makes a character page
@@ -1239,8 +1252,8 @@ routes.thread = async (kind, id, encodedName) => {
 
   // This is intentionally after the profile paint: Wikidata enriches a
   // character, it does not decide whether the page is usable. Its direct
-  // relationships then open familiar Panel pages when known, or search when
-  // Panel has not learned that person/team yet.
+  // relationships then open familiar Inkwell pages when known, or search when
+  // Inkwell has not learned that person/team yet.
   if (hasLore) {
     const loreSlot = document.querySelector('#thread-lore');
     api(`/api/thread/${kind}/${id}/lore`)
@@ -1266,7 +1279,7 @@ routes.thread = async (kind, id, encodedName) => {
         ? `${note}${filterBar(items.length, shown.length)}<div class="grid">${shown.map(volumeCard).join('')}</div>`
         : filterActive()
         ? `${filterBar(0, 0)}<div class="empty">No ${esc(contentFilter().format === 'all' ? 'matching' : contentFilter().format.toLowerCase())} books here. <button class="secondary" data-clear-filter>Clear filter</button></div>`
-        : `<div class="empty">Panel has not saved any books under the name ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`;
+        : `<div class="empty">Inkwell has not saved any books under the name ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`;
     })
     .catch(() => { document.querySelector('#thread-books').innerHTML = '<div class="empty">Could not load saved relationships.</div>'; });
 };
@@ -1422,7 +1435,7 @@ const relativeTime = (iso) => {
 function searchStateHtml(activity) {
   const search = activity.search;
   // Mylar's own count of what it is still looking for, which can be larger
-  // than Panel's list: a part queued elsewhere is still a part nothing has
+  // than Inkwell's list: a part queued elsewhere is still a part nothing has
   // found. Nothing honest to say when Mylar's record is not readable from here.
   const waiting = search?.waiting ?? 0;
   if (!search || !waiting) return '';
@@ -1439,7 +1452,7 @@ function searchStateHtml(activity) {
   </div>`;
 }
 
-// "2026-09-07 11:58:12" from Mylar, or Panel's own epoch for the things Panel
+// "2026-09-07 11:58:12" from Mylar, or Inkwell's own epoch for the things Inkwell
 // itself noticed. Either way it is rendered on the reader's clock.
 function eventWhen(event) {
   const at = event.whenLocal ? mylarTime(event.whenLocal) : new Date(event.at);
@@ -1456,7 +1469,7 @@ function activityHtml(events) {
   if (!events?.items?.length) return '';
   return `<section class="request-activity">
     <div class="section-head"><span class="kicker no">03</span><h2>Recently ${info('recently')}</h2>
-      <span class="kicker aside">${events.pushing ? 'Also pushed to your notifier' : 'Panel is not pushing these anywhere'}</span></div>
+      <span class="kicker aside">${events.pushing ? 'Also pushed to your notifier' : 'Inkwell is not pushing these anywhere'}</span></div>
     <div class="event-list">${events.items.slice(0, 6).map((event) => `<div class="event-row${event.kind === 'stalled' ? ' warn' : ''}">
       ${/* Mylar's own wall clock when it has one: this browser shares that
              timezone and the server does not. */ ''}
@@ -1529,7 +1542,7 @@ async function abortDownload(id, button) {
 // a text-only download queue, a covers-and-parts request list, and a shelf
 // index underneath -- so a single omnibus could appear three times, twice
 // without its cover, and a reader had to work out that they were the same
-// thing. Everything Panel knows about a title now lands on one card: what
+// thing. Everything Inkwell knows about a title now lands on one card: what
 // Mylar is doing with it, which parts were asked for, and where to read it.
 const requestState = (status) => ({
   Wanted: 'Waiting on a search', Snatched: 'Handed to the downloader', Downloaded: 'Downloaded',
@@ -1550,7 +1563,7 @@ function entryStandingFrom(entry) {
   return 'idle';
 }
 
-// Everything Panel holds about a title, keyed by the id Mylar, ComicVine and
+// Everything Inkwell holds about a title, keyed by the id Mylar, ComicVine and
 // the download queue all happen to share.
 function requestEntries({ shelf, activity, queue }) {
   const byId = new Map();
@@ -1697,9 +1710,9 @@ routes.library = async () => {
 const healthState = (available, ready, missing) => available ? ready : missing;
 
 routes.settings = async () => {
-  view.innerHTML = `<section class="lede settings-lede"><span class="kicker" style="color:var(--accent)">Panel preferences</span>
+  view.innerHTML = `<section class="lede settings-lede"><span class="kicker" style="color:var(--accent)">Inkwell preferences</span>
     <h1>Make the reading room<br /><em>your own.</em></h1>
-    <p>These preferences only change Panel. Your Mylar, Komga and downloader setup stays untouched.</p>
+    <p>These preferences only change Inkwell. Your Mylar, Komga and downloader setup stays untouched.</p>
   </section><div class="empty">Loading connection status…</div>`;
   const health = await api('/api/health');
   const cache = health.cache ?? { entries: 0 };
@@ -1711,13 +1724,13 @@ routes.settings = async () => {
   const starts = [['discover', 'Discover'], ['browse', 'Browse'], ['threads', 'Characters & creators'], ['library', 'My requests']];
   view.innerHTML = `
     ${lede('settings', {
-      kicker: 'Panel preferences',
+      kicker: 'Inkwell preferences',
       title: 'Make the reading room<br /><em>your own.</em>',
-      body: 'These preferences only change Panel. Your Mylar, Komga and downloader setup stays untouched.',
+      body: 'These preferences only change Inkwell. Your Mylar, Komga and downloader setup stays untouched.',
     })}
     <section class="settings-section"><div class="section-head"><span class="kicker no">01</span><h2>Display</h2><span class="kicker aside">Saved on this device</span></div>
       <div class="settings-grid">
-        <label class="setting"><span class="kicker">Start on</span><select data-setting="start-page">${starts.map(([value, label]) => `<option value="${value}"${setting('start-page', 'discover') === value ? ' selected' : ''}>${label}</option>`).join('')}</select><small>The page Panel opens to when you return.</small></label>
+        <label class="setting"><span class="kicker">Start on</span><select data-setting="start-page">${starts.map(([value, label]) => `<option value="${value}"${setting('start-page', 'discover') === value ? ' selected' : ''}>${label}</option>`).join('')}</select><small>The page Inkwell opens to when you return.</small></label>
         <label class="setting"><span class="kicker">Poster size</span><input data-setting="poster" type="range" min="110" max="320" step="10" value="${poster.value}" /><small>${poster.value}px wide · changes every shelf and search grid.</small></label>
         <label class="setting"><span class="kicker">Results per page</span><select data-setting="page-size">${PAGE_SIZES.map((n) => `<option value="${n}"${n === pageSize() ? ' selected' : ''}>${n}</option>`).join('')}</select><small>Applies to publisher and search result pages.</small></label>
         <label class="setting toggle"><input data-setting="reduce-motion" type="checkbox"${settingOn('reduce-motion') ? ' checked' : ''} /><span><b>Reduce motion</b><small>Stops loading shimmer and other non-essential movement.</small></span></label>
@@ -1725,7 +1738,7 @@ routes.settings = async () => {
     </section>
     <section class="settings-section"><div class="section-head"><span class="kicker no">02</span><h2>Requests</h2><span class="kicker aside">Mylar remains the request manager</span></div>
       <div class="settings-grid request-settings">
-        <div class="setting"><span class="kicker">Choose before requesting</span><b>Collections open a volume picker</b><small>For a multi-volume collection, choose individual parts or request all of them. Panel then queues only those parts in Mylar.</small></div>
+        <div class="setting"><span class="kicker">Choose before requesting</span><b>Collections open a volume picker</b><small>For a multi-volume collection, choose individual parts or request all of them. Inkwell then queues only those parts in Mylar.</small></div>
         <div class="setting"><span class="kicker">What happens next</span><b>Mylar searches in the background</b><small>Mylar, Prowlarr and your download client decide when a selected part arrives. Komga scans it after import.</small></div>
       </div>
     </section>
@@ -1734,16 +1747,16 @@ routes.settings = async () => {
         <article class="connection"><span class="kicker">Catalogue</span><b>ComicVine</b><p class="status ${health.comicvine?.limited ? 'warn' : 'good'}">${esc(rate)}</p><small>Metadata, covers, people and series discovery.</small></article>
         <article class="connection"><span class="kicker">Requests</span><b>Mylar</b><p class="status ${health.ok ? 'good' : 'warn'}">${health.ok ? 'Connected' : 'Unavailable'}</p><small>Watchlist and background searching.</small></article>
         <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>
-        <article class="connection"><span class="kicker">Supplement</span><b>Metron</b><p class="status ${health.metron?.available ? 'good' : 'muted'}">${esc(metron)}</p><small>Optional story-arc data. No token is required for Panel to work.</small></article>
+        <article class="connection"><span class="kicker">Supplement</span><b>Metron</b><p class="status ${health.metron?.available ? 'good' : 'muted'}">${esc(metron)}</p><small>Optional story-arc data. No token is required for Inkwell to work.</small></article>
       </div>
     </section>
     <section class="settings-section"><div class="section-head"><span class="kicker no">04</span><h2>Local catalogue ${info('local catalogue')}</h2><span class="kicker aside">${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</span></div>
-      <div class="cache-card"><div><b>Builds a local catalogue as you browse</b><p>Every ComicVine result Panel sees is kept in SQLite: volumes, characters, creators, teams, events and their known links. Repeat searches use local data first, then only ask ComicVine for information Panel has not learned yet.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div>
-      <div class="cache-card enrichment-card"><div><b>Gentle enrichment is ${enrich.pending ? 'waiting' : 'caught up'}</b><p>${enrich.pending || 0} title${enrich.pending === 1 ? '' : 's'} queued · ${enrich.done || 0} enriched. Panel slowly fills in detail only for things you searched, opened, followed or requested. It pauses automatically when ComicVine rate-limits.</p></div></div>
+      <div class="cache-card"><div><b>Builds a local catalogue as you browse</b><p>Every ComicVine result Inkwell sees is kept in SQLite: volumes, characters, creators, teams, events and their known links. Repeat searches use local data first, then only ask ComicVine for information Inkwell has not learned yet.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div>
+      <div class="cache-card enrichment-card"><div><b>Gentle enrichment is ${enrich.pending ? 'waiting' : 'caught up'}</b><p>${enrich.pending || 0} title${enrich.pending === 1 ? '' : 's'} queued · ${enrich.done || 0} enriched. Inkwell slowly fills in detail only for things you searched, opened, followed or requested. It pauses automatically when ComicVine rate-limits.</p></div></div>
       <p class="settings-note">Clearing response cache does not erase the local catalogue, its relationship links, requests, downloads or Mylar settings.</p>
     </section>
     <section class="settings-section"><div class="section-head"><span class="kicker no">05</span><h2>Reset</h2></div>
-      <div class="cache-card"><div><b>Reset this device’s Panel preferences</b><p>Returns the start page, poster size, page size and request confirmation to their defaults. Server data is unaffected.</p></div><button class="secondary" data-reset-preferences>Reset preferences</button></div>
+      <div class="cache-card"><div><b>Reset this device’s Inkwell preferences</b><p>Returns the start page, poster size, page size and request confirmation to their defaults. Server data is unaffected.</p></div><button class="secondary" data-reset-preferences>Reset preferences</button></div>
     </section>`;
 };
 
@@ -1896,7 +1909,7 @@ function renderPartPicker(id, options) {
   // way the head copy says which it is, so the default is never a surprise.
   const preselect = slot.dataset.collection === 'true';
   // Two things worth knowing before choosing, neither of them a refusal: a
-  // second copy is occasionally the point, and Panel does not get to decide.
+  // second copy is occasionally the point, and Inkwell does not get to decide.
   const owned = options.owned ? `<p class="picker-note owned">Already on your shelf in Komga${
     options.owned.books ? ` — ${plural(options.owned.books, 'book')}` : ''}. ${
     options.owned.readUrl ? `<a href="${esc(options.owned.readUrl)}" target="_blank" rel="noreferrer">Read it</a> instead, or request it again if you want another copy.` : ''}</p>` : '';
@@ -2060,7 +2073,7 @@ document.addEventListener('click', async (event) => {
   }
   const clearCacheButton = event.target.closest('[data-clear-cache]');
   if (clearCacheButton) {
-    if (!window.confirm('Clear Panel’s short-lived response cache? Your local catalogue, requests and library are not affected.')) return;
+    if (!window.confirm('Clear Inkwell’s short-lived response cache? Your local catalogue, requests and library are not affected.')) return;
     clearCacheButton.disabled = true;
     clearCacheButton.textContent = 'Clearing…';
     try { await api('/api/cache/clear', { method: 'POST' }); toast('Catalogue cache cleared.'); render(); }
@@ -2069,21 +2082,21 @@ document.addEventListener('click', async (event) => {
   }
   const resetPreferences = event.target.closest('[data-reset-preferences]');
   if (resetPreferences) {
-    if (!window.confirm('Reset Panel preferences on this device?')) return;
+    if (!window.confirm('Reset Inkwell preferences on this device?')) return;
     try {
-      ['start-page', 'reduce-motion', 'confirm-requests', 'poster', 'pagesize'].forEach((key) => localStorage.removeItem(`panel:${key}`));
+      ['start-page', 'reduce-motion', 'confirm-requests', 'poster', 'pagesize'].forEach((key) => localStorage.removeItem(`inkwell:${key}`));
       // Resetting preferences replays the page introductions too.
       for (const key of Object.keys(localStorage)) {
-        if (key.startsWith('panel:seen:')) localStorage.removeItem(key);
+        if (key.startsWith('inkwell:seen:')) localStorage.removeItem(key);
       }
     } catch { /* private mode */ }
-    setPoster(150); setPageSize(48); applyAccessibility(); toast('Panel preferences reset.'); render();
+    setPoster(150); setPageSize(48); applyAccessibility(); toast('Inkwell preferences reset.'); render();
     return;
   }
   // The ⓘ is a button inside clickable cards; it explains, it does not
   // navigate. On a touch screen there is no hover to open it with, and this
   // handler used to swallow the tap and show nothing at all — so the icons
-  // were decoration on the device Panel is mostly read on.
+  // were decoration on the device Inkwell is mostly read on.
   const tipButton = event.target.closest('.info, .term');
   if (tipButton) {
     event.preventDefault();

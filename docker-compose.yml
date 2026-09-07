@@ -1,7 +1,7 @@
 services:
-  comic-requester:
+  inkwell:
     build: .
-    container_name: comic-requester
+    container_name: inkwell
     restart: unless-stopped
     labels:
       # Lets Unraid's Docker page expose an Open WebUI action for this
@@ -23,7 +23,7 @@ services:
       KOMGA_USER: ${KOMGA_USER:-}
       KOMGA_PASSWORD: ${KOMGA_PASSWORD:-}
       CACHE_DB: /data/cache.db
-      # Panel reaches Komga over the LAN; the reader's browser might come
+      # Inkwell reaches Komga over the LAN; the reader's browser might come
       # through a proxy, so the "Read" links can point somewhere else.
       # KOMGA_PUBLIC_URL: https://komga.example.com
       # Where to push "your book arrived" and "the queue has stopped". Any URL
@@ -41,7 +41,7 @@ services:
       # Reuses Mylar's API key without copying it into this project or browser.
       # The whole directory rather than just config.ini: mylar.db is beside it,
       # and it is the only place Mylar records which providers have searched,
-      # when, and when the next sweep is due. Read-only, and Panel only ever
+      # when, and when the next sweep is due. Read-only, and Inkwell only ever
       # reads -- the file is journal_mode=delete, so that needs no write access
       # to the file or its directory.
       - /mnt/cache/appdata/mylar3/mylar:/run/mylar:ro
@@ -50,6 +50,9 @@ services:
       # The container is read-only, so the ComicVine cache needs a writable home.
       # It must outlive the container: rebuilding otherwise costs ~26 slow
       # ComicVine calls per character all over again.
+      # The volume keeps its old name deliberately: it holds the ComicVine
+      # cache and every proxied cover, and renaming it would orphan all of it
+      # for the sake of a tidier label.
       - comic-requester-cache:/data
     ports:
       - 192.168.40.44:3013:3000

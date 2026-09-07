@@ -24,7 +24,7 @@ const SPARQL = 'https://query.wikidata.org/sparql';
 const SEARCH = 'https://www.wikidata.org/w/api.php';
 // Wikidata asks that clients identify themselves; an anonymous scraper-looking
 // agent is what gets an IP blocked.
-const AGENT = 'Panel/1.0 (personal comic library; https://github.com/local/panel)';
+const AGENT = 'Inkwell/1.0 (personal comic library; https://github.com/WhoIsCalebBrown/inkwell)';
 
 const MIN_GAP_MS = 1200;
 let lastCall = 0;
@@ -142,7 +142,7 @@ export async function characterTeams(entityId, limit = 12) {
 // universe they inhabit, their affiliations and explicit family links.
 //
 // `P1441` (present in work) is not included. It mixes comics, games, films and
-// episodes into a long, unranked pile, while ComicVine already gives Panel the
+// episodes into a long, unranked pile, while ComicVine already gives Inkwell the
 // much more useful physical-comics list. This endpoint is for relationships,
 // not a noisier duplicate bibliography.
 const CHARACTER_RELATIONSHIPS = [

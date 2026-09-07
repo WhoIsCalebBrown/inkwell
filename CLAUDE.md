@@ -1,4 +1,4 @@
-# Panel — working notes for agents
+# Inkwell — working notes for agents
 
 An Overseerr-style request front-end for Mylar3. Single user, LAN-only, deployed
 to Unraid at `192.168.40.44:3013` behind `requests.calebs.online`.
@@ -57,7 +57,7 @@ These are all things that have been got wrong before.
 6. **One primary action per volume, called Request**, with its scope stated in
    prose underneath. The open-ended series watch is a separate secondary button.
    Do not reintroduce a primary button whose meaning depends on invisible fields.
-7. **Preferences are per-device**, in `localStorage` under `panel:*`. They never
+7. **Preferences are per-device**, in `localStorage` under `inkwell:*`. They never
    touch Mylar's or Komga's own configuration.
 
 ## ComicVine quirks worth knowing before you call it
@@ -99,7 +99,7 @@ Seeded browse lists live under `threads:seeded:<kind>:vN` with a 7-day TTL.
 **Bump the `vN` whenever the seeds or the shaping change**, or you will serve
 the old list for a week.
 
-## Mylar has two interfaces, and Panel needs both
+## Mylar has two interfaces, and Inkwell needs both
 
 The API (`:8090/api?cmd=`) covers the watchlist, a series' parts, and queueing
 an issue. It has no command for the direct-download queue at all — that lives
@@ -118,12 +118,12 @@ mid-download, that row stays marked `Downloading` forever, nothing picks the
 rest up, and every later request sits at `Queued` behind it — indefinitely, with
 nothing in the log after the restart. From the request list that is
 indistinguishable from a search that never found anything. It had 12 files
-wedged behind one dead row for a day before Panel could see it.
+wedged behind one dead row for a day before Inkwell could see it.
 
 Its SQLite (`/run/mylar/mylar.db`, mounted read-only) carries the rest: which
 providers have searched and when (`provider_searches`), when the standing sweep
 next runs (`jobhistory`), what is Wanted and since when (`issues`), and what has
-been post-processed (`snatched`, which Panel uses as the arrival bell). It is
+been post-processed (`snatched`, which Inkwell uses as the arrival bell). It is
 `journal_mode=delete`, so a reader needs no write access to the file or its
 directory — which is what makes the `:ro` mount into a read-only container work.
 Every read degrades to null when the file is absent, as it is in local
@@ -143,7 +143,7 @@ not a fault to fix.
 
 ## Events, and why the server has a watcher
 
-Panel used to be a page you had to visit; that is how a wedged download queue
+Inkwell used to be a page you had to visit; that is how a wedged download queue
 went unnoticed for a day. `watchForEvents()` runs every five minutes, reads only
 what Mylar has already written, and turns two things into events: a book
 post-processed (`snatched`), and a queue that has stopped. Events are recorded
@@ -155,7 +155,7 @@ On an empty events table the first pass records silently. There is no useful
 moment to tell a reader about a book that landed last week.
 
 **Stall detection must never use Mylar's clock.** How long a file has been
-downloading is measured from Panel's own observations, kept in `downloads:running`
+downloading is measured from Inkwell's own observations, kept in `downloads:running`
 in the cache. Reading `ddl_info.updated_date` as if it were this container's
 local time reported a perfectly healthy 3GB transfer as stalled, minutes after a
 deploy.
@@ -207,7 +207,7 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
 - **Format is a standing filter, not a destination.** The Formats browse
   section is gone — a shape of book was never somewhere to go, and every way of
   drawing thickness was rejected. `contentFilter()` is stored per device
-  (`panel:filter:format`, `panel:filter:medium`) and `applyContentFilter()` runs
+  (`inkwell:filter:format`, `inkwell:filter:medium`) and `applyContentFilter()` runs
   over every grid of books: publisher catalogues, a thread's credits, hubs,
   search. Render `filterBar()` above any grid it governs, and when a filter
   empties a page say it was the filter, with a Clear button.
@@ -216,7 +216,7 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
   full-screen veil — words arrive blurred, settle, and the panel dissolves after
   ~3s or on any key, click or scroll; reduced motion gets a still panel. Every
   visit after is one kicker line and nothing else. Tracked in `localStorage` as
-  `panel:seen:<route>`, cleared by Reset preferences. The veil is stashed in
+  `inkwell:seen:<route>`, cleared by Reset preferences. The veil is stashed in
   `pendingVeil` and appended to `document.body` by `armVeil()` after the route
   renders — never returned inline, because routes that rebuild the view's
   innerHTML would wipe it, and a fixed overlay does not belong in the scroller.
@@ -231,7 +231,7 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
 - Prefer showing over defining. The Formats browse card draws spine thickness to
   scale; that is worth more than the glossary entry beside it.
 - `GLOSSARY` is for vocabulary the comics industry owns (omnibus, Epic
-  Collection, Earth-616). Never add an entry for a word Panel itself chose — fix
+  Collection, Earth-616). Never add an entry for a word Inkwell itself chose — fix
   the word instead. "Credits" was one of those: it is now "the books ComicVine
   names them in", everywhere a reader can see it.
 - `SOURCES` is the other half of the same ⓘ: where a list on the page came from
@@ -252,7 +252,7 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
   ties the first two together with `for`/`id`.
 - **The ⓘ must open on tap.** iPad is a primary device and has no hover; the
   click handler used to swallow the tap and show nothing, which made every icon
-  decoration on the device Panel is mostly read on. Tap toggles `.open`, another
+  decoration on the device Inkwell is mostly read on. Tap toggles `.open`, another
   tap, Escape or a scroll closes it, and `placeTip()` flips it away from the
   right edge (the page clips rather than scrolls, so an unflipped tip would be
   gone, not merely awkward).
@@ -260,7 +260,7 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
 
 ## Running it
 
-See `SKILL.md` in `.claude/skills/panel-dev/` for the full loop, including how to
+See `SKILL.md` in `.claude/skills/inkwell-dev/` for the full loop, including how to
 verify a change in a real browser without a display.
 
 Quick version: the app needs a Mylar API key and a ComicVine key, which live on

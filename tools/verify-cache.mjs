@@ -1,4 +1,4 @@
-// Offline integrity audit for Panel's persisted ComicVine mirror.
+// Offline integrity audit for Inkwell's persisted ComicVine mirror.
 //
 // This intentionally does not call any provider. It proves that every saved
 // relationship is backed by the field in the cached source document that

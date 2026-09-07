@@ -26,7 +26,7 @@ db.exec('PRAGMA mmap_size = 268435456');
 db.exec('PRAGMA cache_size = -32000');
 db.exec('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, at INTEGER NOT NULL)');
 // The response cache makes repeat URLs fast; this mirror makes the catalogue
-// itself queryable. It grows only from data Panel has legitimately fetched, so
+// itself queryable. It grows only from data Inkwell has legitimately fetched, so
 // it never tries to bulk-scrape ComicVine or burn an API allowance rebuilding
 // information that is already on disk.
 db.exec(`CREATE TABLE IF NOT EXISTS catalogue_volumes (
@@ -97,7 +97,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS events (
   at INTEGER NOT NULL,
   when_local TEXT
 )`);
-// `at` is Panel's own clock -- when it noticed. `when_local` is Mylar's wall
+// `at` is Inkwell's own clock -- when it noticed. `when_local` is Mylar's wall
 // clock verbatim, for events that come from Mylar's records: it is written in
 // Mylar's timezone, which this container does not share and the reader's
 // browser does. Displaying the former for a Mylar event is how a book that
@@ -389,7 +389,7 @@ export function findObjects(query, kinds, limit = 100) {
   });
 }
 
-// Everything Panel has learned of one kind, for the Threads browse page. This
+// Everything Inkwell has learned of one kind, for the Threads browse page. This
 // reads only the local catalogue: the page shows what you have actually
 // explored rather than a keyword guess at what exists.
 export function listObjects(kind, { publisher = '', limit = 60 } = {}) {
@@ -497,7 +497,7 @@ export function relatedVolumes(kind, id, exceptVolumeId = '', limit = 12) {
   });
 }
 
-// A deliberately broad candidate retrieval; Panel's transparent relevance
+// A deliberately broad candidate retrieval; Inkwell's transparent relevance
 // scorer still supplies the final ordering. SQLite serves this even when the
 // provider is limited or offline.
 export function findVolumes(query, limit = 300) {
@@ -550,7 +550,7 @@ export function setMylarPartStatus(comicId, issueId, status) {
   updateMylarPart.run(String(status), Date.now(), String(comicId), String(issueId));
 }
 
-// Mylar has been told to forget this series; Panel's copy of its parts is now
+// Mylar has been told to forget this series; Inkwell's copy of its parts is now
 // a fiction. Only the mirror of Mylar's state goes -- the catalogue entry and
 // its covers are ComicVine's, and the reader may well request it again.
 // Returns false when this exact event was already recorded, so a caller can
@@ -654,7 +654,7 @@ export function enrichmentStats() {
   };
 }
 
-// A one-time-on-startup migration path for the cache Panel already accumulated
+// A one-time-on-startup migration path for the cache Inkwell already accumulated
 // before the mirror existed. Invalid/non-volume payloads are ignored by
 // rememberVolumes, and nothing here reaches the network.
 function hydrateMirrorFromCachedResponses() {

@@ -1,4 +1,4 @@
-// Provider-free smoke test for the stable Panel HTTP contract.
+// Provider-free smoke test for the stable Inkwell HTTP contract.
 // Run inside the container after a rebuild, or point PANEL_URL at a deployment.
 
 const base = String(process.env.PANEL_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');

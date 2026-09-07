@@ -19,7 +19,7 @@ import { supplement } from './enrich.js';
 
 const app = express();
 
-// Panel's JSON is long lists of volumes -- a 96-title page runs to ~150KB of
+// Inkwell's JSON is long lists of volumes -- a 96-title page runs to ~150KB of
 // highly repetitive text that compresses by roughly 85%. Express ships no
 // compression, and on a phone or iPad over WiFi that transfer, not the query,
 // is what the reader waits for. zlib is built in, so this costs no dependency.
@@ -96,7 +96,7 @@ function komgaCredentials() {
 
 const komgaCreds = komgaCredentials();
 const komgaUrl = (komgaCreds?.url || '').replace(/\/$/, '');
-// Panel's own requests reach Komga over the LAN; the reader's browser might be
+// Inkwell's own requests reach Komga over the LAN; the reader's browser might be
 // coming through a proxy instead, so the link they follow is configurable.
 const komgaPublicUrl = (process.env.KOMGA_PUBLIC_URL || komgaUrl).replace(/\/$/, '');
 const komgaAuth = komgaCreds
@@ -151,7 +151,7 @@ async function mylar(command, params = {}) {
   if (!response.ok) throw new Error(`Mylar returned HTTP ${response.status}`);
   // A few Mylar write commands legitimately answer with plain "OK" rather
   // than JSON. Treat that as success; trying response.json() made a successful
-  // per-part queue look like a Panel error.
+  // per-part queue look like a Inkwell error.
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); } catch { return text.trim(); }
@@ -283,7 +283,7 @@ async function comicVine(resource, params = {}) {
 
 async function comicVineFetch(resource, query) {
   const response = await fetch(`https://comicvine.gamespot.com/api/${resource}/?${query}`, {
-    headers: { 'User-Agent': 'ComicRequester/1.0 (personal media server)' }, signal: AbortSignal.timeout(20_000),
+    headers: { 'User-Agent': 'Inkwell/1.0 (personal media server)' }, signal: AbortSignal.timeout(20_000),
   });
   // ComicVine rate-limits with 420 ("enhance your calm") and 429. Naming it
   // matters: a bare status looks like a bug rather than throttling, and the
@@ -615,7 +615,7 @@ async function shelf() {
       inProgress: found?.inProgress ?? 0,
       // The point of the whole app is to end up reading the book. Komga runs
       // on the same LAN as this server, so its own URL is the reader's too --
-      // unless Panel is reached from outside, which is what the override is
+      // unless Inkwell is reached from outside, which is what the override is
       // for. Without an id there is nothing to link to and the button is
       // simply absent rather than pointing at a search page.
       readUrl: found?.id ? `${komgaPublicUrl}/series/${encodeURIComponent(found.id)}` : null,
@@ -691,7 +691,7 @@ async function refreshRequestParts() {
 
 // Between them, Mylar's API and its web UI still cannot answer the question a
 // waiting reader actually has: has anything looked for this, and when will it
-// look again? That lives only in its own SQLite, which Panel opens read-only.
+// look again? That lives only in its own SQLite, which Inkwell opens read-only.
 // The file is `journal_mode=delete`, so a reader needs no write access to it
 // or its directory -- which is what makes a `:ro` mount into a read-only
 // container safe. If the file is not there the feature is simply absent; every
@@ -763,7 +763,7 @@ function searchState() {
 }
 
 // When each waiting part was first asked for, straight from Mylar's own
-// issues table. Panel's copy only knows when it last polled.
+// issues table. Inkwell's copy only knows when it last polled.
 function wantedSince() {
   const rows = mylarQuery("SELECT IssueID, DateAdded FROM issues WHERE Status = 'Wanted'");
   return new Map((rows ?? []).map((row) => [String(row.IssueID), String(row.DateAdded || '')]));
@@ -771,14 +771,14 @@ function wantedSince() {
 
 // Mylar's API answers for what was asked for and what eventually arrived, but
 // it has no command for the part in between. Its direct-download queue lives
-// only behind the web UI -- so Panel reads that page's own JSON feed, on the
+// only behind the web UI -- so Inkwell reads that page's own JSON feed, on the
 // same host and port as the API, and uses the button beside it to retry.
 //
 // This matters more than it sounds. The queue is served by a single worker: if
 // Mylar restarts mid-download the row stays marked Downloading forever, no
 // worker ever picks the rest up, and every later request simply sits at Queued
 // behind it. From the outside that looks exactly like a request that was never
-// searched for. Panel could not tell the difference until now.
+// searched for. Inkwell could not tell the difference until now.
 const mylarWebUrl = (process.env.MYLAR_WEB_URL || mylarUrl).replace(/\/api\/?$/, '');
 
 async function mylarWeb(pathname, params = {}) {
@@ -829,7 +829,7 @@ async function downloadQueue() {
     changed: String(updated ?? '').trim() || null,
     issueId: String(issueId ?? ''), comicId: String(comicId ?? ''),
     // Which mirror it is coming from. Mega refuses whole evenings at a time
-    // with ETOOMANY, and knowing that is the difference between "Panel is
+    // with ETOOMANY, and knowing that is the difference between "Inkwell is
     // broken" and "that host is busy, it will fall through to the next one".
     source: DOWNLOAD_SOURCES[String(linkType ?? '').trim()] ?? null,
   })).filter((item) => item.id && item.title);
@@ -856,7 +856,7 @@ app.get('/api/downloads', async (_req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// Panel has been a page you have to visit. That is how a download queue sat
+// Inkwell has been a page you have to visit. That is how a download queue sat
 // wedged for a day: everything needed to notice was on screen, and nobody was
 // looking at the screen. The watcher below turns state into events, which the
 // requests page shows on your return and which are pushed if a URL is set.
@@ -949,7 +949,7 @@ async function watchForEvents() {
     const queue = await downloadQueue().catch(() => []);
     const waiting = queue.filter((item) => item.state === 'Queued');
     const running = queue.filter((item) => item.state === 'Downloading');
-    // How long a file has been running is measured by Panel's own observations,
+    // How long a file has been running is measured by Inkwell's own observations,
     // never by Mylar's wall clock: that clock belongs to another timezone, and
     // reading it as if it were this one reported a healthy transfer as stalled
     // within minutes of a deploy. This also measures the right thing -- how
@@ -1002,7 +1002,7 @@ app.post('/api/request/:comicId/part/:issueId/cancel', async (req, res, next) =>
   try {
     await mylar('unqueueIssue', { id: issueId });
     await mylarParts(comicId, { refresh: true });
-    res.json({ ok: true, message: 'Panel stopped waiting for that part.' });
+    res.json({ ok: true, message: 'Inkwell stopped waiting for that part.' });
   } catch (error) { next(error); }
 });
 
@@ -1067,7 +1067,7 @@ app.get('/api/requests', async (req, res, next) => {
     // that were actually requested -- a 192-issue watchlisted series otherwise
     // buries the two volumes you really are waiting on.
     const items = listMylarParts().filter((part) => String(part.status || '').toLowerCase() !== 'skipped');
-    // Waiting parts carry Mylar's own "asked for on" date; Panel's copy only
+    // Waiting parts carry Mylar's own "asked for on" date; Inkwell's copy only
     // knows when it last polled, which is not the same question.
     const asked = wantedSince();
     const present = await komgaShelf();
@@ -1085,11 +1085,11 @@ app.get('/api/requests', async (req, res, next) => {
       items: shaped, counts: requestSummary(items), refreshed: req.query.refresh === '1',
       // Null when Mylar's database is not readable from here: the page then
       // says nothing about searching rather than guessing at it. `waiting` is
-      // Mylar's own count, not Panel's copy of it -- a part queued from another
-      // device, or before Panel last polled, is still a part nothing has found.
+      // Mylar's own count, not Inkwell's copy of it -- a part queued from another
+      // device, or before Inkwell last polled, is still a part nothing has found.
       search: searchState() && { ...searchState(), waiting: asked.size },
       explanation: {
-        Wanted: 'Panel asked Mylar to search this part. It is waiting on Mylar’s indexers and download client.',
+        Wanted: 'Inkwell asked Mylar to search this part. It is waiting on Mylar’s indexers and download client.',
         Snatched: 'Mylar found a release and handed it to the download client.',
         Downloaded: 'Mylar marked the part as downloaded. Komga may take a moment to scan it into the library.',
         Archived: 'Mylar considers this part present in your comic library.',
@@ -1238,7 +1238,7 @@ async function teamLineUp(name) {
 // on a cold request; a separately loaded lore section makes that enrichment
 // feel additive instead of turning every character page into a spinner.
 //
-// A Wikidata relationship is only a Panel link when the matching ComicVine
+// A Wikidata relationship is only a Inkwell link when the matching ComicVine
 // object has already been legitimately learned. Everything else stays useful
 // as a search, never a guessed id or an invented volume relationship.
 function mapLoreItems(items, kind = null) {
@@ -1375,7 +1375,7 @@ const LINES = {
 // Volumes are what you request; threads are what you follow. Browse needs to
 // reach the latter, so this searches characters, teams, creators and arcs.
 const SEARCH_RESOURCES = { character: 'character', team: 'team', person: 'person', story_arc: 'story_arc' };
-// The reader-facing name for each thread kind. "Thread" is Panel's own word
+// The reader-facing name for each thread kind. "Thread" is Inkwell's own word
 // for the tier and stays in the code; the interface says what the thing is.
 const THREAD_LABELS = { character: 'Characters', person: 'Creators', team: 'Teams', story_arc: 'Events' };
 
@@ -1781,7 +1781,7 @@ async function publisherThreads(name, resource, seeds) {
         field_list: 'id,name,deck,image,publisher,count_of_issue_appearances',
       })), `${name} ${resource}s`));
   } catch (error) {
-    // A publisher page is still useful with the people/groups Panel already
+    // A publisher page is still useful with the people/groups Inkwell already
     // knows. Only surface the provider failure when the local mirror has no
     // honest answer at all.
     if (!local.length) throw error;
@@ -2266,7 +2266,7 @@ const rails = [
 ];
 
 // These are reader-first launch points, not an assertion that ComicVine has a
-// reliable global "most read" score (it does not). They use only volumes Panel
+// reliable global "most read" score (it does not). They use only volumes Inkwell
 // already knows, then their links become richer as a reader opens titles.
 const STARTER_PATHS = [
   { id: 'batman-first', title: 'Best first Batman omnibuses', queries: ['batman omnibus'], edition: 'Omnibus', search: 'Batman' },
@@ -2540,7 +2540,7 @@ app.get('/api/request/:id/options', async (req, res, next) => {
 });
 
 // Adding a series makes Mylar import its own issue list. It deliberately does
-// not queue anything: Panel shows that list first, then queues only the reader's
+// not queue anything: Inkwell shows that list first, then queues only the reader's
 // chosen parts. This matters because this Mylar uses autowant_all = false.
 app.post('/api/request/:id/prepare', async (req, res, next) => {
   const id = requestId(req, res);
@@ -2610,7 +2610,7 @@ app.post('/api/request/:comicId/part/:issueId/retry', async (req, res, next) => 
     return res.status(400).json({ error: 'A valid Mylar series and part id is required.' });
   }
   const part = getMylarParts(comicId).parts.find((item) => item.id === String(issueId));
-  if (!part) return res.status(404).json({ error: 'That part is not in Panel’s request history yet.' });
+  if (!part) return res.status(404).json({ error: 'That part is not in Inkwell’s request history yet.' });
   const state = String(part.status || '').toLowerCase();
   if (['downloaded', 'archived', 'snatched'].includes(state)) {
     return res.status(409).json({ error: 'Mylar is already handling or has completed this part.' });
@@ -2673,7 +2673,7 @@ async function cachedCover(volumeId) {
     const url = new URL(sourceUrl);
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error('The cover URL is invalid.');
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'Panel/1.0 (personal media server)' }, signal: AbortSignal.timeout(30_000),
+      headers: { 'User-Agent': 'Inkwell/1.0 (personal media server)' }, signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(`The cover host returned HTTP ${response.status}`);
     const declared = Number(response.headers.get('content-length') || 0);
@@ -2701,7 +2701,7 @@ app.get('/api/cover/:id', async (req, res, next) => {
     res.type(cover.mimeType);
     res.sendFile(cover.path);
   } catch (error) {
-    // A missing cover should fall back to Panel's title tile, not make the
+    // A missing cover should fall back to Inkwell's title tile, not make the
     // card unusable. Keep the diagnostic in logs without leaking it into img.
     console.warn(`Cover ${id}: ${error.message}`);
     res.status(404).end();

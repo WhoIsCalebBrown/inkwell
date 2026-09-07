@@ -1,11 +1,11 @@
 ---
-name: panel-dev
-description: Run Panel locally and verify a change in a real browser without a display. TRIGGER when working in the comic-requester repo and you need to start the server, reproduce a UI bug, check a route renders, screenshot a layout, or confirm a front-end change actually works. DO NOT TRIGGER for pure server-side logic that has no rendered output.
+name: inkwell-dev
+description: Run Inkwell locally and verify a change in a real browser without a display. TRIGGER when working in the comic-requester repo and you need to start the server, reproduce a UI bug, check a route renders, screenshot a layout, or confirm a front-end change actually works. DO NOT TRIGGER for pure server-side logic that has no rendered output.
 ---
 
-# Running and verifying Panel
+# Running and verifying Inkwell
 
-Panel has no test suite. The only honest way to confirm a front-end change is to
+Inkwell has no test suite. The only honest way to confirm a front-end change is to
 render it in a browser and read the DOM back. Chromium is installed; use it.
 
 ## Before you start a server
@@ -22,13 +22,13 @@ Use **port 3099** for your own testing, and stop only that one when finished.
 
 ## Starting a server
 
-Panel reads its ComicVine and Mylar keys from a mounted Mylar `config.ini`, which
+Inkwell reads its ComicVine and Mylar keys from a mounted Mylar `config.ini`, which
 does not exist on this workstation. Two options:
 
 **Offline (no keys).** Boots fine; SQLite-only routes work.
 
 ```sh
-PORT=3099 MYLAR_CONFIG=/dev/null node server.js > /tmp/panel.log 2>&1 &
+PORT=3099 MYLAR_CONFIG=/dev/null node server.js > /tmp/inkwell.log 2>&1 &
 ```
 
 Works: `/api/threads/browse`, `/api/requests`, `/api/publishers`, `/api/formats`,
@@ -42,7 +42,7 @@ without ever printing them:
 ```sh
 eval "$(tr '\0' '\n' < /proc/<their-pid>/environ \
   | grep -E '^(MYLAR_API_KEY|COMICVINE_API_KEY)=' | sed 's/^/export /')"
-PORT=3099 MYLAR_CONFIG=/dev/null node server.js > /tmp/panel.log 2>&1 &
+PORT=3099 MYLAR_CONFIG=/dev/null node server.js > /tmp/inkwell.log 2>&1 &
 ```
 
 Do not write keys to a file, echo them, or put them in a command line.
@@ -73,7 +73,7 @@ pick the one with real content.
 ## Screenshotting a layout
 
 For anything where the question is "does this look right", take the picture and
-actually look at it. Check the narrow breakpoint too — Panel is used on phones.
+actually look at it. Check the narrow breakpoint too — Inkwell is used on phones.
 
 ```sh
 chromium --headless --no-sandbox --disable-gpu --user-data-dir=/tmp/cd-2 \
