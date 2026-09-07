@@ -1,51 +1,422 @@
-const $ = (s) => document.querySelector(s);
-const state = { search: [], library: [], filters: { format: 'all', publisher: 'all', year: 'all', sort: 'relevance' }, currentQuery: '' };
-const esc = (value = '') => String(value).replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
+// Panel — a front-end for the Publisher → Line → Thread → Volume model.
+// A "thread" is whatever a reader follows: a character for superhero books,
+// a creator for manga and creator-owned work, a team or an event where those fit.
 
-async function api(url, options) { const r = await fetch(url, options); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(data.error || 'The catalogue could not complete that request.'); return data; }
-function toast(message, type = '') { const el = $('#toast'); el.textContent = message; el.className = `show ${type}`; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.className = ''; }, 4000); }
-function show(view) { document.querySelectorAll('.view').forEach((el) => el.classList.toggle('active-view', el.id === view)); document.querySelectorAll('.nav[data-view]').forEach((el) => el.classList.toggle('active', el.dataset.view === view)); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-function setImage(img, item) { if (!item.cover) { img.style.display = 'none'; return; } img.src = item.cover; img.alt = `${item.title} cover`; img.onerror = () => { img.style.display = 'none'; }; }
+const view = document.querySelector('#view');
+const sheet = document.querySelector('#sheet');
+const sheetBody = document.querySelector('#sheet-body');
+const toastEl = document.querySelector('#toast');
+const searchInput = document.querySelector('#search-input');
 
-function railCard(item) {
-  const node = $('#rail-card-template').content.cloneNode(true); const card = node.querySelector('.rail-card'); const img = node.querySelector('img');
-  setImage(img, item); node.querySelector('b').textContent = item.title; node.querySelector('span').textContent = [item.publisher, item.year].filter(Boolean).join(' · ');
-  card.addEventListener('click', () => details(item)); return node;
-}
-function renderRails(sections) {
-  const root = $('#discover-rails'); root.replaceChildren();
-  for (const section of sections) { const node = $('#rail-template').content.cloneNode(true); node.querySelector('h2').textContent = section.title; const rail = node.querySelector('.rail-scroll'); rail.append(...section.items.map(railCard)); node.querySelector('.see-all').addEventListener('click', () => search(section.id === 'omnibus' ? 'omnibus' : section.title, section.id === 'omnibus' ? 'Omnibus' : null)); root.append(node); }
-}
-async function loadDiscovery() { $('#discover-rails').innerHTML = '<div class="empty">Loading collections…</div>'; try { renderRails((await api('/api/discover')).sections); } catch (e) { $('#discover-rails').innerHTML = '<div class="empty"><b>Discovery is unavailable</b><p>Try search while ComicVine reconnects.</p></div>'; toast(e.message, 'error'); } }
+const state = { shelf: [], filters: {}, results: [] };
 
-function resultCard(item, library = false) {
-  const node = $('#result-template').content.cloneNode(true); const img = node.querySelector('img'); const badge = node.querySelector('.badge'); const request = node.querySelector('.request');
-  setImage(img, item); node.querySelector('.publisher').textContent = item.publisher || 'Unknown publisher'; node.querySelector('h3').textContent = item.title;
-  node.querySelector('.meta').textContent = [item.year, item.issues ? `${item.issues} issues` : null, library ? item.status : null].filter(Boolean).join(' · '); node.querySelector('.format').textContent = item.edition || (library ? 'On your shelf' : 'Series');
-  if (library || item.requested) { badge.textContent = library ? (item.status || 'Watching') : 'Requested'; request.textContent = library ? 'On watchlist' : 'Already requested'; request.disabled = true; }
-  else { request.textContent = 'Request'; request.addEventListener('click', () => requestTitle(item, request)); }
-  node.querySelector('.more').addEventListener('click', () => details(item)); return node;
-}
-function filtered() { let list = [...state.search]; const f = state.filters; if (f.format !== 'all') list = list.filter((x) => x.edition === f.format); if (f.publisher !== 'all') list = list.filter((x) => x.publisher === f.publisher); if (f.year !== 'all') list = list.filter((x) => { const y = +x.year; return f.year === 'older' ? y && y < 2000 : y >= +f.year && y < +f.year + 10; }); if (f.sort === 'newest') list.sort((a, b) => +b.year - +a.year); if (f.sort === 'issues') list.sort((a, b) => b.issues - a.issues); if (f.sort === 'title') list.sort((a, b) => a.title.localeCompare(b.title)); return list; }
-function updatePublisherFilter() { const select = $('#publisher-filter'); const names = [...new Set(state.search.map((x) => x.publisher).filter(Boolean))].sort(); select.replaceChildren(new Option('All publishers', 'all'), ...names.map((x) => new Option(x, x))); }
-function renderSearch() { const grid = $('#search-results'), empty = $('#search-empty'); grid.replaceChildren(); const list = filtered(); $('#search-count').textContent = `${list.length} of ${state.search.length} results`; if (!list.length) { empty.classList.remove('hidden'); return; } empty.classList.add('hidden'); grid.append(...list.map((item) => resultCard(item))); }
-async function search(query, format = null) {
-  query = query.trim(); if (query.length < 2) return; state.currentQuery = query; state.filters = { format: format || 'all', publisher: 'all', year: 'all', sort: 'relevance' };
-  $('#search-input').value = query; $('#format-filter').value = state.filters.format; $('#year-filter').value = 'all'; $('#sort-filter').value = 'relevance'; $('#search-title').textContent = format === 'Omnibus' ? 'Omnibuses' : `Results for “${query}”`; $('#search-results').innerHTML = '<div class="empty">Searching ComicVine…</div>'; $('#search-count').textContent = ''; show('search');
-  try { const { items } = await api(`/api/search?q=${encodeURIComponent(query)}`); if (state.currentQuery !== query) return; state.search = items; updatePublisherFilter(); renderSearch(); }
-  catch (e) { $('#search-results').replaceChildren(); $('#search-empty').classList.remove('hidden'); toast(e.message, 'error'); }
-}
-async function loadLibrary() { try { const { items } = await api('/api/library'); state.library = items; $('#library-count').textContent = items.length || ''; const grid = $('#library-grid'), empty = $('#library-empty'); grid.replaceChildren(); if (!items.length) empty.classList.remove('hidden'); else { empty.classList.add('hidden'); grid.append(...items.map((x) => resultCard(x, true))); } } catch (e) { toast(e.message, 'error'); } }
-async function requestTitle(item, button) { button.disabled = true; button.textContent = 'Requesting…'; try { await api('/api/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id }) }); item.requested = true; button.textContent = 'Requested'; closeDetails(); loadLibrary(); toast(`${item.title} is now on your Mylar watchlist.`, 'success'); } catch (e) { button.disabled = false; button.textContent = 'Request'; toast(e.message, 'error'); } }
-function details(item) { const dialog = $('#details'); const explanation = item.edition === 'Omnibus' ? 'An omnibus is one oversized book that collects a long run of issues.' : item.edition === 'Collected edition' ? 'A collected edition groups a story arc or several individual issues into one book.' : 'This listing is a regular comic series rather than a collected book.'; $('#detail-content').innerHTML = `<div class="detail"><div class="detail-cover">${item.cover ? `<img src="${esc(item.cover)}" alt="${esc(item.title)} cover">` : '<div class="no-cover">P</div>'}</div><div><p class="eyebrow">${esc(item.edition || 'Series')}</p><h2>${esc(item.title)}</h2><p class="meta">${[item.publisher, item.year, item.issues ? `${item.issues} issues` : null].filter(Boolean).map(esc).join(' · ')}</p><p class="detail-copy">${esc(item.description || 'ComicVine does not have a description for this listing.')}</p><p class="explain"><b>In plain English:</b> ${explanation}</p><div class="detail-actions"><button id="detail-request" ${item.requested ? 'disabled' : ''}>${item.requested ? 'Already requested' : 'Request series'}</button>${item.url ? `<a href="${esc(item.url)}" target="_blank" rel="noreferrer">View on ComicVine ↗</a>` : ''}</div></div></div>`; const button = $('#detail-request'); if (!item.requested) button.addEventListener('click', () => requestTitle(item, button)); dialog.showModal(); }
-function closeDetails() { const d = $('#details'); if (d.open) d.close(); }
+/* ---------------- plumbing ---------------- */
 
-$('#global-search').addEventListener('submit', (e) => { e.preventDefault(); search($('#search-input').value); });
-document.querySelectorAll('[data-query]').forEach((button) => button.addEventListener('click', () => search(button.dataset.query)));
-document.querySelectorAll('.nav[data-view]').forEach((button) => button.addEventListener('click', () => { show(button.dataset.view); if (button.dataset.view === 'library') loadLibrary(); }));
-document.querySelector('[data-action="omnibus"]').addEventListener('click', () => search('omnibus', 'Omnibus'));
-document.querySelectorAll('.filters select').forEach((select) => select.addEventListener('change', () => { state.filters[select.id.replace('-filter', '')] = select.value; renderSearch(); }));
-$('#close-details').addEventListener('click', closeDetails); $('#details').addEventListener('click', (e) => { if (e.target === $('#details')) closeDetails(); });
-$('#theme-button').addEventListener('click', () => document.documentElement.classList.toggle('light'));
-window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#search-input').focus(); } if (e.key === 'Escape') closeDetails(); });
-loadDiscovery(); loadLibrary();
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const esc = (value = '') =>
+  String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function api(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'That request could not be completed.');
+  return data;
+}
+
+let toastTimer;
+function toast(message, kind = '') {
+  toastEl.textContent = message;
+  toastEl.className = `show ${kind}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.className = ''; }, 4200);
+}
+
+const skeletons = (n, cols = 'repeat(auto-fill, minmax(150px, 1fr))') =>
+  `<div class="grid" style="grid-template-columns:${cols}">${'<div class="skeleton"></div>'.repeat(n)}</div>`;
+
+// Deterministic tint from the id, so a title always looks the same before its
+// real cover arrives — and stays recognisable if ComicVine never has one.
+const TINTS = ['#1d3f6e', '#8d2f1f', '#4a4634', '#6b3f86', '#25241f', '#2c6152', '#7a4a1e', '#3d3a52'];
+const tintFor = (id = '') => TINTS[[...String(id)].reduce((n, c) => n + c.charCodeAt(0), 0) % TINTS.length];
+
+function coverHtml(item, { flag = '', ratio = '2 / 3' } = {}) {
+  const tint = tintFor(item.id);
+  const label = esc(item.title || item.name || '');
+  const inner = item.cover || item.image
+    ? `<img src="${esc(item.cover || item.image)}" alt="" loading="lazy"
+         onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'fallback',textContent:this.alt||''}))" />`
+    : `<div class="fallback">${label}</div>`;
+  return `<div class="cover" style="aspect-ratio:${ratio};background:${tint}">${inner}${
+    flag ? `<span class="flag">${esc(flag)}</span>` : ''}</div>`;
+}
+
+/* ---------------- routing ---------------- */
+
+const routes = {};
+function go(path) { if (location.hash !== `#${path}`) location.hash = path; else render(); }
+
+async function render() {
+  const path = (location.hash || '#/discover').slice(1);
+  const [, name, ...rest] = path.split('/');
+  const route = routes[name] || routes.discover;
+  document.querySelectorAll('#nav button').forEach((b) => {
+    const active = b.dataset.route === name || (name === 'thread' && b.dataset.route === 'browse')
+      || (name === 'search' && b.dataset.route === 'browse');
+    b.setAttribute('aria-current', String(active));
+  });
+  window.scrollTo({ top: 0 });
+  try {
+    await route(...rest);
+  } catch (error) {
+    view.innerHTML = `<div class="empty"><p>${esc(error.message)}</p></div>`;
+  }
+}
+
+/* ---------------- shelf ---------------- */
+
+async function loadShelf() {
+  const data = await api('/api/library');
+  state.shelf = data.items;
+  state.counts = data.counts;
+  document.querySelector('#shelf-count').textContent = data.counts.inLibrary;
+  return data;
+}
+
+const onShelf = (id) => state.shelf.some((x) => x.id === String(id));
+
+function volumeCard(item) {
+  const owned = item.requested || onShelf(item.id);
+  return `<article class="card">
+    <button class="cover-btn" data-volume="${esc(item.id)}" style="all:unset;cursor:pointer">
+      ${coverHtml(item, { flag: owned ? 'On shelf' : '' })}
+    </button>
+    <div class="meta">
+      ${item.edition ? `<span class="kicker" style="color:${item.edition === 'Omnibus' ? 'var(--accent)' : 'var(--muted)'}">${esc(item.edition)}</span>` : ''}
+      <h3>${esc(item.title)}</h3>
+      <span class="sub">${[item.publisher, item.year, item.issues ? plural(item.issues, 'issue') : null].filter(Boolean).map(esc).join(' · ')}</span>
+      <button class="act ${owned ? 'owned' : ''}" data-request="${esc(item.id)}" ${owned ? 'disabled' : ''}>
+        ${owned ? 'On your shelf' : 'Request →'}
+      </button>
+    </div>
+  </article>`;
+}
+
+/* ---------------- discover ---------------- */
+
+routes.discover = async () => {
+  view.innerHTML = `<section class="lede">
+      <span class="kicker" style="color:var(--accent)">No. 01 — Your shelf</span>
+      <h1>Follow a <em>thread</em>,<br />not an issue number.</h1>
+      <p>Search a character, a creator or a book. Requesting hands it to Mylar, which
+         hunts it down and files it into Komga.</p>
+    </section>
+    <div id="shelf-section"></div>
+    <div id="rails">${skeletons(6)}</div>`;
+
+  const shelfSection = document.querySelector('#shelf-section');
+  loadShelf().then(({ items, counts }) => {
+    const recent = items.slice(0, 12);
+    shelfSection.innerHTML = `
+      <div class="section-head">
+        <span class="kicker no">01</span><h2>On your shelf</h2>
+        <span class="kicker aside">${counts.inLibrary} in library · ${counts.searching} still searching</span>
+      </div>
+      ${recent.length ? `<div class="rail">${recent.map((x) => `
+        <article class="card">
+          ${coverHtml(x, { flag: x.inLibrary ? 'In library' : '' })}
+          <div class="meta"><h3>${esc(x.title)}</h3>
+          <span class="sub">${esc(x.state)}${x.books ? ` · ${plural(x.books, 'book')}` : ''}</span></div>
+        </article>`).join('')}</div>`
+        : '<div class="empty">Nothing requested yet.</div>'}`;
+  }).catch((e) => { shelfSection.innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+
+  const rails = document.querySelector('#rails');
+  api('/api/discover').then(({ sections }) => {
+    rails.innerHTML = sections.map((section, i) => `
+      <div class="section-head">
+        <span class="kicker no">0${i + 2}</span><h2>${esc(section.title)}</h2>
+      </div>
+      <div class="rail">${section.items.map(volumeCard).join('')}</div>`).join('');
+  }).catch(() => { rails.innerHTML = '<div class="empty">ComicVine is not answering right now.</div>'; });
+};
+
+/* ---------------- browse ---------------- */
+
+routes.browse = async () => {
+  view.innerHTML = `<section class="lede">
+      <span class="kicker" style="color:var(--accent)">Browse</span>
+      <h1>Start with a house<br />you already <em>trust</em>.</h1>
+      <p>Publishers lead to lines, lines to the characters, creators and events
+         inside them. Search above to jump straight to a thread.</p>
+    </section>
+    <div id="houses">${skeletons(3, '1fr')}</div>`;
+
+  const { lines } = await api('/api/lines');
+  document.querySelector('#houses').innerHTML = `<div class="index">${
+    Object.entries(lines).map(([house, imprints]) => `
+      <div class="house">
+        <div class="swatch" style="background:${tintFor(house)}"></div>
+        <div>
+          <h2 class="disp">${esc(house)}</h2>
+          <div class="chips">${imprints.map((line) => `
+            <button class="chip kicker" data-search="${esc(`${house} ${line}`)}">${esc(line)}</button>`).join('')}</div>
+        </div>
+        <button class="kicker" data-search="${esc(house)}" style="white-space:nowrap">All →</button>
+      </div>`).join('')}</div>`;
+};
+
+/* ---------------- search ---------------- */
+
+routes.search = async (encoded) => {
+  const query = decodeURIComponent(encoded || '');
+  searchInput.value = query;
+  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:24px">
+      <span class="kicker" style="color:var(--accent)">Search</span>
+      <h1>Results for <em>“${esc(query)}”</em></h1>
+    </section>
+    <div id="threads"></div>
+    <div id="books">${skeletons(10)}</div>`;
+
+  // Threads first: they are how you get into the graph, and they answer a
+  // different question from "which book is this".
+  api(`/api/threads?q=${encodeURIComponent(query)}`).then(({ groups }) => {
+    const el = document.querySelector('#threads');
+    if (!groups?.length) return;
+    el.innerHTML = groups.map((group) => `
+      <div class="section-head"><h2>${esc(group.label)}</h2></div>
+      <div class="rail">${group.items.map((t) => `
+        <article class="card">
+          <button data-thread="${esc(t.kind)}/${esc(t.id)}" style="all:unset;cursor:pointer">
+            ${coverHtml({ id: t.id, name: t.name, image: t.image }, { ratio: '1 / 1' })}
+          </button>
+          <div class="meta"><h3>${esc(t.name)}</h3>
+            <span class="sub">${esc(t.publisher || group.label)}</span></div>
+        </article>`).join('')}</div>`).join('');
+  }).catch(() => {});
+
+  const books = document.querySelector('#books');
+  try {
+    await loadShelf().catch(() => {});
+    const { items } = await api(`/api/search?q=${encodeURIComponent(query)}`);
+    state.results = items;
+    state.filters = { format: 'all', publisher: 'all', sort: 'relevance' };
+    books.innerHTML = `<div class="section-head"><h2>Books</h2>
+        <span class="kicker aside" id="count"></span></div>
+      <div class="filters" id="filters"></div>
+      <div class="grid" id="results"></div>`;
+    renderFilters();
+    renderResults();
+  } catch (error) {
+    books.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+};
+
+function renderFilters() {
+  const publishers = [...new Set(state.results.map((x) => x.publisher).filter(Boolean))].sort();
+  const editions = [...new Set(state.results.map((x) => x.edition).filter(Boolean))];
+  const select = (key, label, options) => `<label><span class="kicker">${label}</span>
+    <select data-filter="${key}">${options.map(([v, t]) =>
+      `<option value="${esc(v)}"${state.filters[key] === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
+  document.querySelector('#filters').innerHTML =
+    select('format', 'Format', [['all', 'All formats'], ...editions.map((e) => [e, e])]) +
+    select('publisher', 'Publisher', [['all', 'All publishers'], ...publishers.map((p) => [p, p])]) +
+    select('sort', 'Sort', [['relevance', 'Best match'], ['newest', 'Newest'], ['issues', 'Most issues'], ['title', 'A–Z']]);
+}
+
+function renderResults() {
+  const { format, publisher, sort } = state.filters;
+  let list = state.results
+    .filter((x) => format === 'all' || x.edition === format)
+    .filter((x) => publisher === 'all' || x.publisher === publisher);
+  if (sort === 'newest') list = [...list].sort((a, b) => (b.year || 0) - (a.year || 0));
+  if (sort === 'issues') list = [...list].sort((a, b) => b.issues - a.issues);
+  if (sort === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title));
+  document.querySelector('#count').textContent = `${list.length} of ${state.results.length}`;
+  document.querySelector('#results').innerHTML = list.length
+    ? list.map(volumeCard).join('')
+    : '<div class="empty">Nothing matches those filters.</div>';
+}
+
+/* ---------------- thread ---------------- */
+
+routes.thread = async (kind, id) => {
+  view.innerHTML = `<div class="thread"><div class="skeleton portrait"></div><div></div></div>`;
+  const [thread] = await Promise.all([api(`/api/thread/${kind}/${id}`), loadShelf().catch(() => {})]);
+  const stat = (label, value) => value
+    ? `<div><span class="kicker">${label}</span><b class="disp">${esc(value)}</b></div>` : '';
+
+  view.innerHTML = `
+    <div class="chips" style="padding:26px 0 4px">
+      ${[thread.publisher, thread.kind === 'person' ? 'Creator' : thread.kind === 'story_arc' ? 'Event'
+         : thread.kind === 'team' ? 'Team' : 'Character'].filter(Boolean)
+        .map((x) => `<span class="kicker">${esc(x)}</span>`).join('<span class="kicker" style="color:var(--faint)">/</span>')}
+    </div>
+    <section class="thread">
+      <div>${coverHtml({ id: thread.id, name: thread.name, image: thread.image }, { ratio: '3 / 4' })}</div>
+      <div>
+        <span class="kicker" style="color:var(--accent)">The thread</span>
+        <h1>${esc(thread.name)}</h1>
+        ${thread.realName || thread.aliases?.length
+          ? `<div class="alias">${esc(thread.realName || thread.aliases.slice(0, 3).join(' · '))}</div>` : ''}
+        <div class="stats">
+          ${stat('Appearances', thread.appearances ? thread.appearances.toLocaleString() : '')}
+          ${stat('Publisher', thread.publisher)}
+          ${stat('First seen', thread.firstAppearance)}
+        </div>
+        ${thread.deck ? `<p class="deck">${esc(thread.deck)}</p>` : ''}
+      </div>
+    </section>
+    ${thread.teams?.length ? `
+      <div class="section-head"><span class="kicker no">01</span><h2>Also appears with</h2>
+        <span class="kicker aside">Teams and groups</span></div>
+      <div class="chips">${thread.teams.map((t) =>
+        `<button class="chip kicker" data-thread="${esc(t.kind)}/${esc(t.id)}">${esc(t.name)}</button>`).join('')}</div>` : ''}
+    <div class="section-head"><span class="kicker no">${thread.teams?.length ? '02' : '01'}</span>
+      <h2>Books</h2><span class="kicker aside">Oldest first</span></div>
+    <div id="thread-books">${skeletons(10)}</div>`;
+
+  // ComicVine cannot list a character's volumes (volume_credits is unreliable
+  // and issue_credits runs to five figures), so this is a title search on the
+  // thread's name — ordered by year to read as a run rather than a ranking.
+  api(`/api/search?q=${encodeURIComponent(thread.name)}`)
+    .then(({ items }) => {
+      const ordered = [...items].sort((a, b) => (a.year || 9999) - (b.year || 9999));
+      document.querySelector('#thread-books').innerHTML = ordered.length
+        ? `<div class="grid">${ordered.map(volumeCard).join('')}</div>`
+        : '<div class="empty">No books found for this thread.</div>';
+    })
+    .catch(() => { document.querySelector('#thread-books').innerHTML = '<div class="empty">Could not load books.</div>'; });
+};
+
+/* ---------------- library ---------------- */
+
+routes.library = async () => {
+  view.innerHTML = `<section class="lede" style="border:0"><span class="kicker" style="color:var(--accent)">Your shelf</span>
+    <h1>What you asked for,<br />and what <em>arrived</em>.</h1></section>${skeletons(1, '1fr')}`;
+  const { items, counts, komga } = await loadShelf();
+  view.innerHTML = `
+    <section class="lede" style="border:0;padding-bottom:26px">
+      <span class="kicker" style="color:var(--accent)">Your shelf</span>
+      <h1>What you asked for,<br />and what <em>arrived</em>.</h1>
+    </section>
+    <div class="stats" style="border-top:0;margin:0 0 26px;padding-top:0">
+      <div><span class="kicker">Requested</span><b class="disp">${counts.watching}</b></div>
+      <div><span class="kicker">In library</span><b class="disp" style="color:var(--shelf)">${counts.inLibrary}</b></div>
+      <div><span class="kicker">Still searching</span><b class="disp" style="color:var(--accent)">${counts.searching}</b></div>
+    </div>
+    ${komga ? '' : '<p class="kicker" style="color:var(--accent);padding-bottom:14px">Komga is not connected — every title will read as searching.</p>'}
+    <div class="index">${items.map((item, i) => `
+      <div class="row">
+        <span class="kicker" style="color:var(--faint)">${String(i + 1).padStart(2, '0')}</span>
+        <div class="thumb">${coverHtml(item)}</div>
+        <div>
+          <div class="title">${esc(item.title)}</div>
+          <span class="kicker">${esc(item.publisher || '')}${item.year ? ` · ${esc(item.year)}` : ''}</span>
+        </div>
+        <span class="kicker state ${item.inLibrary ? 'owned' : ''}">${esc(item.state)}${
+          item.books ? ` · ${item.books}` : ''}</span>
+      </div>`).join('')}</div>`;
+};
+
+/* ---------------- volume sheet ---------------- */
+
+async function openVolume(id) {
+  sheetBody.innerHTML = `<div class="sheet-top"><span class="kicker">Loading…</span></div>`;
+  sheet.showModal();
+  try {
+    const item = await api(`/api/volume/${id}`);
+    const owned = item.requested || onShelf(item.id);
+    const explain = item.edition === 'Omnibus'
+      ? 'An omnibus is one oversized book collecting a long run of issues — the whole story in a single volume.'
+      : item.edition === 'Collected edition'
+        ? 'A collected edition gathers a story arc or a handful of issues into one book.'
+        : 'A regular series, collected issue by issue rather than as one book.';
+    sheetBody.innerHTML = `
+      <div class="sheet-top">
+        <span class="kicker" style="color:var(--accent)">${esc(item.edition)}</span>
+        <button id="close-sheet" aria-label="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <div>${coverHtml(item, { flag: owned ? 'On shelf' : '' })}</div>
+        <div>
+          <h2>${esc(item.title)}</h2>
+          <div class="stats" style="border-top:0;margin-top:18px;padding-top:0">
+            ${item.publisher ? `<div><span class="kicker">Publisher</span><b class="disp">${esc(item.publisher)}</b></div>` : ''}
+            ${item.year ? `<div><span class="kicker">Started</span><b class="disp">${esc(item.year)}</b></div>` : ''}
+            ${item.issues ? `<div><span class="kicker">Issues</span><b class="disp">${esc(item.issues)}</b></div>` : ''}
+          </div>
+          <p class="copy">${esc(item.description || 'ComicVine has no description for this listing.')}</p>
+          <div class="plain"><span class="kicker" style="color:var(--accent)">In plain English</span>
+            <p style="margin:6px 0 0;color:var(--body);line-height:1.6">${esc(explain)}</p></div>
+          <div class="actions">
+            <button class="primary" data-request="${esc(item.id)}" ${owned ? 'disabled' : ''}>
+              ${owned ? 'Already on your shelf' : 'Request this volume'}
+            </button>
+            ${item.url ? `<a class="kicker" href="${esc(item.url)}" target="_blank" rel="noreferrer">View on ComicVine ↗</a>` : ''}
+          </div>
+        </div>
+      </div>`;
+  } catch (error) {
+    sheetBody.innerHTML = `<div class="sheet-top"><span class="kicker">${esc(error.message)}</span></div>`;
+  }
+}
+
+async function request(id, button) {
+  const original = button.textContent.trim();
+  button.disabled = true;
+  button.textContent = 'Requesting…';
+  try {
+    await api('/api/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    button.textContent = 'Requested';
+    button.classList.add('owned');
+    // Mylar searches every provider with a delay between each, so the shelf
+    // will not update for minutes — say so rather than implying it is done.
+    toast('Added to Mylar. It searches GetComics and your Prowlarr indexers in the background.');
+    loadShelf().catch(() => {});
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = original;
+    toast(error.message, 'error');
+  }
+}
+
+/* ---------------- events ---------------- */
+
+document.addEventListener('click', (event) => {
+  const thread = event.target.closest('[data-thread]');
+  if (thread) return go(`/thread/${thread.dataset.thread}`);
+  const search = event.target.closest('[data-search]');
+  if (search) return go(`/search/${encodeURIComponent(search.dataset.search)}`);
+  const volume = event.target.closest('[data-volume]');
+  if (volume) return openVolume(volume.dataset.volume);
+  const req = event.target.closest('[data-request]');
+  if (req && !req.disabled) return request(req.dataset.request, req);
+  if (event.target.closest('#close-sheet')) return sheet.close();
+  const nav = event.target.closest('#nav button');
+  if (nav) return go(`/${nav.dataset.route}`);
+});
+
+document.addEventListener('change', (event) => {
+  const filter = event.target.closest('[data-filter]');
+  if (!filter) return;
+  state.filters[filter.dataset.filter] = filter.value;
+  renderResults();
+});
+
+document.querySelector('#search-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const query = searchInput.value.trim();
+  if (query.length >= 2) { searchInput.blur(); go(`/search/${encodeURIComponent(query)}`); }
+});
+
+sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.close(); });
+window.addEventListener('hashchange', render);
+render();
