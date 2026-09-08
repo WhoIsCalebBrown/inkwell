@@ -120,8 +120,12 @@ jobs:
           done
 
       # Signed, verifiable provenance for the exact digest, checkable with
-      # `gh attestation verify`.
+      # `gh attestation verify`. GitHub does not offer attestations on a
+      # user-owned private repository, and a release must not fail over a
+      # feature the account cannot use -- the SBOM and in-toto provenance buildx
+      # puts in the manifest are published either way.
       - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
         with:
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}

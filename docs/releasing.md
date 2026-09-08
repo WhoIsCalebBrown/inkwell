@@ -50,11 +50,25 @@ support question can be pinned to.
 
 ## One-time setup on the first release
 
-GHCR creates a new package as **private**. Unraid checks for updates
-anonymously, so a private package means it can never see a new digest and never
-offers Update. After the first successful release, open the package page
-(Repository → Packages → inkwell → Package settings) and set its visibility to
-**public**. Confirm it from a machine that is not logged in:
+Three things have to be public before a stranger — or an Unraid server — can
+follow this path. None of them happen automatically.
+
+1. **The GHCR package.** GHCR creates a new package as **private**. Unraid
+   checks for updates anonymously, so a private package means it can never see
+   a new digest and never offers Update. After the first successful release,
+   open the package page (Repository → Packages → inkwell → Package settings)
+   and set its visibility to **public**.
+2. **The repository.** The Unraid template's `Icon` and `TemplateURL` are
+   `raw.githubusercontent.com` links, which 404 while the repository is
+   private, and the install instructions fetch the template from the same
+   place. GitHub also declines to store build attestations for a user-owned
+   private repository — the release workflow skips that step rather than fail,
+   so a private repository still publishes a usable image, just without the
+   `gh attestation verify` half.
+3. **Actions.** Enabled by default; nothing to configure. The release
+   authenticates with `GITHUB_TOKEN` and needs no secret.
+
+Confirm the result from a machine that is not logged in:
 
 ```sh
 docker pull ghcr.io/whoiscalebbrown/inkwell:latest
