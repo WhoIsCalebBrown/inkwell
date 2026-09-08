@@ -696,19 +696,50 @@ app.use((req, res, next) => {
 // providers are intentionally diagnosed by /api/health, but a slow optional
 // metadata service must not make an otherwise healthy web server look dead.
 app.get('/api/ready', (_req, res) => res.json({ ok: true }));
+// A status page must never be slower than the thing it reports on. This route
+// used to call Metron live on every request: when that host is unreachable --
+// which it has been for days at a time -- the settings page sat on "Loading
+// connection status" for the full timeout, twelve seconds, and then said
+// Metron was down. The answer is kept and refreshed behind the request.
+const METRON_HEALTH_TTL = 10 * 60_000;
+let metronHealth = { available: metron.available(), reachable: null, reason: 'not checked yet', checkedAt: null };
+let metronProbe = null;
+
+function metronStatus() {
+  const stale = !metronHealth.checkedAt || Date.now() - metronHealth.checkedAt > METRON_HEALTH_TTL;
+  if (stale && !metronProbe && metron.available()) {
+    metronProbe = metron.status()
+      .then((result) => { metronHealth = { ...result, checkedAt: Date.now() }; })
+      .catch((error) => {
+        metronHealth = { available: true, reachable: false, reason: error.message, checkedAt: Date.now() };
+      })
+      .finally(() => { metronProbe = null; });
+  }
+  return metronHealth;
+}
+
+// Mylar's client waits two minutes, which is right for a request that matters
+// and wrong for a diagnostic. If the watchlist cannot answer promptly, that is
+// itself the answer.
+const withinreason = (work, ms, fallback) => Promise.race([
+  work.catch(() => fallback),
+  new Promise((resolve) => { setTimeout(() => resolve(fallback), ms).unref?.(); }),
+]);
+
 app.get('/api/health', async (_req, res) => {
   try {
+    const watched = await withinreason(watchlist().then((list) => list.length), 2_500, null);
     res.json({
       ok: true,
-      watchlist: (await watchlist()).length,
+      // null means Mylar did not answer in time, which the page shows as
+      // unavailable rather than as an empty watchlist.
+      watchlist: watched,
+      mylar: watched !== null,
       komga: Boolean(komgaUrl && komgaAuth),
       comicvine: comicVineStatus(),
       cache: cacheStats(),
       enrichment: enrichmentStats(),
-      // Reports reachability, not just configuration: Metron blocks an IP
-      // outright for bursty traffic, and that should be visible here rather
-      // than showing up as quietly missing data.
-      metron: await metron.status(),
+      metron: metronStatus(),
     });
   }
   catch (error) { res.status(503).json({ ok: false, error: error.message }); }

@@ -51,13 +51,13 @@ function schedule(work) {
   return run;
 }
 
-async function call(path, params = {}) {
+async function call(path, params = {}, { timeout = 20_000 } = {}) {
   if (!available()) return null;
   const query = new URLSearchParams(params);
   return schedule(async () => {
     const response = await fetch(`${BASE}/${path}?${query}`, {
       headers: { Authorization: authHeader(), Accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(timeout),
     });
     if (response.status === 401) throw new Error('Metron rejected the token.');
     if (response.status === 429) throw new Error('Metron is rate-limiting; back off.');
@@ -86,7 +86,9 @@ export async function arcsByName(name) {
 export async function status() {
   if (!available()) return { available: false, reason: 'no-token' };
   try {
-    const page = await call('series/', { name: 'batman' });
+    // A reachability probe, not a data fetch: fail fast rather than holding a
+    // diagnostic open for twenty seconds against a host that is not answering.
+    const page = await call('series/', { name: 'batman' }, { timeout: 5_000 });
     return { available: true, reachable: true, sample: page?.count ?? 0 };
   } catch (error) {
     return { available: true, reachable: false, reason: error.message };

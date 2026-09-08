@@ -1718,18 +1718,40 @@ routes.library = async () => {
 
 const healthState = (available, ready, missing) => available ? ready : missing;
 
-routes.settings = async () => {
-  view.innerHTML = `<section class="lede settings-lede"><span class="kicker" style="color:var(--accent)">Inkwell preferences</span>
-    <h1>Make the reading room<br /><em>your own.</em></h1>
-    <p>These preferences only change Inkwell. Your Mylar, Komga and downloader setup stays untouched.</p>
-  </section><div class="empty">Loading connection status…</div>`;
-  const health = await api('/api/health');
-  const cache = health.cache ?? { entries: 0 };
+// Every one of these is a live service, and a page that waits on all four is
+// as slow as the slowest. The settings page paints from what is known and
+// fills these in when they answer.
+function connectionsHtml(health) {
+  if (!health) {
+    return ['ComicVine', 'Mylar', 'Komga', 'Metron']
+      .map((name) => `<article class="connection"><span class="kicker">&nbsp;</span><b>${name}</b>
+        <p class="status muted">Checking…</p></article>`).join('');
+  }
   const rate = health.comicvine?.limited
     ? `Cooling down · retry in ${Math.ceil((health.comicvine.retryInSeconds || 0) / 60)} min`
     : 'Available';
-  const metron = health.metron?.available ? 'Connected' : (health.metron?.reason || 'Not configured');
-  const enrich = health.enrichment ?? cache.enrichment ?? { pending: 0, done: 0 };
+  // available means "a token is set"; reachable means the host answered. They
+  // are different facts and the page used to report the first as the second.
+  const metron = !health.metron?.available ? 'Not configured'
+    : health.metron.reachable === true ? 'Connected'
+    : health.metron.reachable === false ? `Not reachable · ${health.metron.reason || 'no answer'}`
+    : 'Checking…';
+  const metronState = !health.metron?.available ? 'muted'
+    : health.metron.reachable === false ? 'warn' : 'good';
+  return `
+    <article class="connection"><span class="kicker">Catalogue</span><b>ComicVine</b><p class="status ${health.comicvine?.limited ? 'warn' : 'good'}">${esc(rate)}</p><small>Metadata, covers, people and series discovery.</small></article>
+    <article class="connection"><span class="kicker">Requests</span><b>Mylar</b><p class="status ${health.mylar ? 'good' : 'warn'}">${health.mylar ? 'Connected' : 'Not answering'}</p><small>Watchlist and background searching.</small></article>
+    <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>
+    <article class="connection"><span class="kicker">Supplement</span><b>Metron</b><p class="status ${metronState}">${esc(metron)}</p><small>Optional story-arc data. No token is required for Inkwell to work.</small></article>`;
+}
+
+routes.settings = async () => {
+  // Local numbers are on disk and answer instantly; the connection panel is
+  // the only part that depends on anything else, so it is the only part that
+  // waits.
+  const health = await api('/api/health').catch(() => null);
+  const cache = health?.cache ?? { entries: 0 };
+  const enrich = health?.enrichment ?? cache.enrichment ?? { pending: 0, done: 0 };
   const starts = [['discover', 'Discover'], ['browse', 'Browse'], ['threads', 'Characters & creators'], ['library', 'My requests']];
   view.innerHTML = `
     ${lede('settings', {
@@ -1752,12 +1774,7 @@ routes.settings = async () => {
       </div>
     </section>
     <section class="settings-section"><div class="section-head"><span class="kicker no">03</span><h2>Connections</h2><span class="kicker aside">Read-only diagnostics</span></div>
-      <div class="connection-grid">
-        <article class="connection"><span class="kicker">Catalogue</span><b>ComicVine</b><p class="status ${health.comicvine?.limited ? 'warn' : 'good'}">${esc(rate)}</p><small>Metadata, covers, people and series discovery.</small></article>
-        <article class="connection"><span class="kicker">Requests</span><b>Mylar</b><p class="status ${health.ok ? 'good' : 'warn'}">${health.ok ? 'Connected' : 'Unavailable'}</p><small>Watchlist and background searching.</small></article>
-        <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>
-        <article class="connection"><span class="kicker">Supplement</span><b>Metron</b><p class="status ${health.metron?.available ? 'good' : 'muted'}">${esc(metron)}</p><small>Optional story-arc data. No token is required for Inkwell to work.</small></article>
-      </div>
+      <div class="connection-grid" id="connections">${connectionsHtml(health)}</div>
     </section>
     <section class="settings-section"><div class="section-head"><span class="kicker no">04</span><h2>Local catalogue ${info('local catalogue')}</h2><span class="kicker aside">${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</span></div>
       <div class="cache-card"><div><b>Builds a local catalogue as you browse</b><p>Every ComicVine result Inkwell sees is kept in SQLite: volumes, characters, creators, teams, events and their known links. Repeat searches use local data first, then only ask ComicVine for information Inkwell has not learned yet.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div>
