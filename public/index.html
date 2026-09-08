@@ -8,15 +8,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Inkwell" />
     <title>Inkwell</title>
+    <link rel="icon" type="image/png" href="/inkwell-favicon.png" />
+    <link rel="apple-touch-icon" href="/inkwell-favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Archivo:wght@400;500;600&display=swap" />
-    <link rel="stylesheet" href="/styles.css?v=39" />
+    <link rel="stylesheet" href="/styles.css?v=46" />
   </head>
   <body>
     <header>
       <div class="masthead">
-        <a class="brand disp" href="#/discover">Inkwell<small class="kicker">A reading room for comics</small></a>
+        <a class="brand disp" href="#/discover"><img src="/inkwell-logo.svg" alt="" aria-hidden="true" />
+          <span>Inkwell<small class="kicker">A reading room for comics</small></span></a>
         <form class="search" id="search-form" role="search">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
             <circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path>
@@ -49,6 +52,7 @@
         <button class="kicker" data-route="discover" aria-current="true">Discover</button>
         <button class="kicker" data-route="browse">Browse</button>
         <button class="kicker" data-route="threads">Characters &amp; creators</button>
+        <button class="kicker" data-route="shelf">My shelf</button>
         <button class="kicker" data-route="library">My requests</button>
       </nav>
     </header>
@@ -58,6 +62,6 @@
     <dialog id="sheet"><div class="sheet" id="sheet-body"></div></dialog>
     <div id="toast" role="status"></div>
 
-    <script src="/app.js?v=52" type="module"></script>
+    <script src="/app.js?v=61" type="module"></script>
   </body>
 </html>

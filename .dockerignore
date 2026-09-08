@@ -1,4 +1,18 @@
+# The Dockerfile copies runtime files by name, so this is about build-context
+# size and about never letting a local secret or cache near a published image.
 node_modules
 npm-debug.log
 .git
+.github
+.claude
 data
+config
+design
+docs
+test
+tools
+unraid
+*.md
+.env
+.env.*
+docker-compose*.yml

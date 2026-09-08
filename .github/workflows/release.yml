@@ -1,0 +1,168 @@
+# The only path that publishes an image. It runs on a semantic version tag and
+# on nothing else: a merge to main builds and tests through CI but never
+# touches the registry, so `latest` moves only when a maintainer tags.
+name: Release
+
+on:
+  push:
+    tags:
+      # v1.2.3 -- a stable release. Gets latest, 1, 1.2 and 1.2.3.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      # v1.2.3-rc.1 -- a prerelease. Gets only its own exact tag.
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: read
+
+jobs:
+  # The same workflow pull requests run. A tag that cannot pass CI never
+  # reaches the registry.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish the GHCR manifest
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create/annotate the GitHub Release
+      packages: write      # push to GHCR as GITHUB_TOKEN
+      id-token: write      # keyless signing for the build attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR rejects an uppercase path, and this repository's owner is mixed
+      # case. Lowercasing here keeps forks working without hard-coding a name.
+      - name: Resolve the image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # A tag is the release's identity, so the version the package declares
+      # must agree with it. Failing here is cheaper than shipping an image
+      # whose metadata contradicts its tag.
+      - name: Check the tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          declared="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$declared" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $declared. Bump package.json, commit, then retag."
+            exit 1
+          fi
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN is the supported credential for GHCR in the repository
+      # that owns the package. There is no release secret to configure.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags and OCI metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          # A prerelease publishes its exact version and nothing else. The
+          # moving aliases are gated on the tag having no -suffix rather than
+          # left to the action's defaults, so the rule is readable here.
+          flavor: |
+            latest=${{ !contains(github.ref_name, '-') }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') }}
+          # version, revision, created and source come from the action; these
+          # are the ones only the project can state.
+          labels: |
+            org.opencontainers.image.title=Inkwell
+            org.opencontainers.image.description=A request front end for Mylar3 — browse by publisher, character, creator, team or event, and follow each book to your reading library.
+            org.opencontainers.image.vendor=Caleb Brown
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/docs/self-hosting.md
+
+      - name: Build and push both architectures
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Labels live on each platform's config; annotations are what a
+          # registry UI reads off the index itself.
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Unraid offers Update by comparing the index digest it just read against
+      # the one it pulled. A manifest missing an architecture would still
+      # update, and then fail to start on that machine, so assert both.
+      - name: Verify the published manifest carries both architectures
+        env:
+          REFERENCE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+        run: |
+          docker buildx imagetools inspect "$REFERENCE" --raw > manifest.json
+          for platform in linux/amd64 linux/arm64; do
+            node -e '
+              const list = require("./manifest.json").manifests ?? [];
+              const want = process.argv[1];
+              const has = list.some((m) => `${m.platform?.os}/${m.platform?.architecture}` === want);
+              if (!has) { console.error(`::error::Published manifest is missing ${want}`); process.exit(1); }
+              console.log(`${want} present`);
+            ' "$platform"
+          done
+
+      # Signed, verifiable provenance for the exact digest, checkable with
+      # `gh attestation verify`.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      # The release notes carry the digest, because a digest is the only thing
+      # a rollback or a support question can be pinned to.
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Container image"
+            echo
+            echo '```'
+            echo "$TAGS"
+            echo '```'
+            echo
+            echo "Digest: \`$DIGEST\` — \`docker pull $IMAGE@$DIGEST\`"
+            echo
+            echo "Platforms: \`linux/amd64\`, \`linux/arm64\`."
+            echo
+            echo "Upgrading: back up \`/config\`, then \`docker compose pull && docker compose up -d\`, or press **Update** on the Unraid template. \`/config\` is untouched by an image replacement."
+            echo
+          } > notes.md
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # The tag may have been created by a release drafted in the UI.
+            # Keep whatever notes are already there and append the image block.
+            gh release view "$GITHUB_REF_NAME" --json body -q .body > existing.md
+            cat existing.md notes.md > merged.md
+            gh release edit "$GITHUB_REF_NAME" --notes-file merged.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md \
+              --generate-notes \
+              --verify-tag \
+              $prerelease
+          fi

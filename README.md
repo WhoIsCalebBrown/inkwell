@@ -28,27 +28,42 @@ browser.
 ## Running it
 
 ```sh
-cp .env.example .env      # set MYLAR_DIR; everything else is optional
-docker compose up -d --build
+cp .env.example .env
+docker compose pull
+docker compose up -d
 ```
 
-`MYLAR_DIR` is the only value you must set: the directory holding Mylar's
-`config.ini` and `mylar.db`, mounted read-only. Inkwell reads both API keys
-from the first, so they never enter this project or the browser, and reads
-search and download state from the second, because Mylar's API does not expose
-it. Every other address and path has a single-host default — see
-`.env.example`.
+That deploys the published image, `ghcr.io/whoiscalebbrown/inkwell`, built for
+`linux/amd64` and `linux/arm64`. On Unraid, add the container from
+[its template](unraid/inkwell.xml) instead.
+
+Open `http://SERVER-IP:3013` from your trusted LAN. `/config` is Inkwell's
+single persistent application-data mount; the container initializes it on
+first boot, then runs as the `PUID`/`PGID` configured in `.env.example`.
+
+For normal use, set `MYLAR_DIR` to Mylar's appdata directory (the one holding
+`config.ini` and `mylar.db`) and set `MYLAR_URL` to its API. The mount is
+read-only: Inkwell reads its keys and state but never changes Mylar files. A
+fresh catalogue also needs a ComicVine key, normally read from that config. If
+Mylar is temporarily unavailable, Inkwell still starts and its Settings page
+states which part needs configuration; Komga remains optional.
 
 Without Mylar the server still boots and serves everything held locally —
 browse, publishers, saved books, covers — and says so wherever a provider is
 needed.
 
+For the complete install, configuration, backup/restore, upgrade, proxy, and
+troubleshooting contract, read [the self-hosting guide](docs/self-hosting.md).
+Upgrading is `docker compose pull && docker compose up -d`, or **Update** on
+Unraid; `/config` is a mount, so neither one touches your data.
+
 ## Before you expose it
 
-**Inkwell ships with no password and binds to `127.0.0.1`.** It drives a
+**Inkwell ships for a trusted LAN and listens on port 3013.** It drives a
 download client: anything that can reach it can queue books, cancel them and
-untrack a series. Two things guard that, and you should know the limits of
-both.
+untrack a series. It is deliberately a single-user/shared-account application,
+not a public-registration or multi-user service. Two things guard write
+requests, and you should know the limits of both.
 
 - Set `INKWELL_USER` and `INKWELL_PASSWORD` to put it behind HTTP basic auth.
   Off by default, because a LAN-only install behind nothing does not need it
@@ -58,8 +73,10 @@ both.
   preflight Inkwell never answers — so a page you happen to be visiting cannot
   make your Inkwell act. This is not a substitute for a password.
 
-If you put it on the open internet, put it behind a reverse proxy that
-authenticates, and turn the password on as well.
+For remote access, terminate HTTPS and authenticate at a reverse proxy,
+Tailscale, or tunnel, and turn Basic auth on as well. Inkwell does not
+terminate HTTPS. It does not trust `X-Forwarded-*` headers unless the direct
+proxy IP/CIDR is explicitly listed in `INKWELL_TRUSTED_PROXIES`.
 
 ## What it cannot see
 
@@ -79,8 +96,13 @@ authenticates, and turn the password on as well.
 
 ```sh
 npm run dev            # node --watch, port 3013
+npm test               # unit, migration, setup and release-contract tests
 npm run verify:http    # the HTTP contract, no provider calls
 npm run verify:cache   # every saved relationship, re-derived from its source
+npm run verify:docker  # the production image: clean install, persistence, update
+
+# The container, built from the working tree instead of pulled:
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
 `npm run dev` reads the same `.env` as the container, so a workstation can talk
@@ -105,6 +127,13 @@ got wrong before, and the ComicVine and Mylar quirks each one cost.
 - **The workings are published.** Every list says where it came from and how it
   was matched, because "that shelf is wrong *because* it is a name match" is a
   useful thing for a reader to be able to say.
+
+## Releasing
+
+Push a `v1.2.3` tag; GitHub Actions tests it, builds `linux/amd64` and
+`linux/arm64`, and publishes one GHCR manifest tagged `latest`, `1`, `1.2` and
+`1.2.3`. Nothing else publishes: a merge to `main` is tested and built, never
+released. See [the release guide](docs/releasing.md).
 
 ## Licence
 

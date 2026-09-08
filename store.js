@@ -3,133 +3,221 @@
 // loses all of that on every restart, which for a single-user server means the
 // expensive path is effectively always cold. This keeps it on disk instead.
 
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, backup } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const file = process.env.CACHE_DB || path.join(root, 'data', 'cache.db');
-fs.mkdirSync(path.dirname(file), { recursive: true });
-
-const db = new DatabaseSync(file);
+// Containers set CONFIG_DIR=/config. Retain the local project-data fallback so
+// `node server.js` remains convenient for development, while every production
+// persistent path is derived from one canonical mount.
+const configDir = process.env.CONFIG_DIR || path.join(root, 'data');
+const file = process.env.CACHE_DB || path.join(configDir, 'cache.db');
+let databaseExisted = false;
+let db;
+try {
+  databaseExisted = fs.existsSync(file) && fs.statSync(file).size > 0;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  db = new DatabaseSync(file);
+} catch (error) {
+  throw new Error(`Inkwell cannot open its persistent SQLite database at ${file}. Ensure /config is mounted, writable, and owned by the configured PUID/PGID. ${error.message}`);
+}
 db.exec('PRAGMA journal_mode = WAL');
 // Single-user server, and every table here is a rebuildable cache of ComicVine
 // or Mylar. NORMAL fsyncs at checkpoints rather than every commit, which is the
 // difference between a snappy enrichment pass and one that stalls on disk.
 db.exec('PRAGMA synchronous = NORMAL');
 db.exec('PRAGMA temp_store = MEMORY');
-db.exec('PRAGMA busy_timeout = 5000');
+db.exec('PRAGMA busy_timeout = 15000');
 // The catalogue is read far more than written; mapping it and giving SQLite a
 // real page cache keeps the browse queries off the disk entirely.
 db.exec('PRAGMA mmap_size = 268435456');
 db.exec('PRAGMA cache_size = -32000');
-db.exec('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, at INTEGER NOT NULL)');
-// The response cache makes repeat URLs fast; this mirror makes the catalogue
-// itself queryable. It grows only from data Inkwell has legitimately fetched, so
-// it never tries to bulk-scrape ComicVine or burn an API allowance rebuilding
-// information that is already on disk.
-db.exec(`CREATE TABLE IF NOT EXISTS catalogue_volumes (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  title_normalized TEXT NOT NULL,
-  aliases_normalized TEXT NOT NULL DEFAULT '',
-  publisher TEXT,
-  publisher_normalized TEXT NOT NULL DEFAULT '',
-  start_year TEXT,
-  issue_count INTEGER NOT NULL DEFAULT 0,
-  fetched_at INTEGER NOT NULL,
-  payload TEXT NOT NULL
-)`);
-db.exec('CREATE INDEX IF NOT EXISTS catalogue_volumes_title_idx ON catalogue_volumes(title_normalized)');
-db.exec('CREATE INDEX IF NOT EXISTS catalogue_volumes_publisher_idx ON catalogue_volumes(publisher_normalized)');
-db.exec(`CREATE TABLE IF NOT EXISTS catalogue_objects (
-  kind TEXT NOT NULL,
-  id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  name_normalized TEXT NOT NULL,
-  aliases_normalized TEXT NOT NULL DEFAULT '',
-  publisher TEXT,
-  publisher_normalized TEXT NOT NULL DEFAULT '',
-  fetched_at INTEGER NOT NULL,
-  payload TEXT NOT NULL,
-  PRIMARY KEY (kind, id)
-)`);
-db.exec('CREATE INDEX IF NOT EXISTS catalogue_objects_name_idx ON catalogue_objects(kind, name_normalized)');
-db.exec(`CREATE TABLE IF NOT EXISTS catalogue_links (
-  from_kind TEXT NOT NULL,
-  from_id TEXT NOT NULL,
-  relation TEXT NOT NULL,
-  to_kind TEXT NOT NULL,
-  to_id TEXT NOT NULL,
-  to_name TEXT,
-  PRIMARY KEY (from_kind, from_id, relation, to_kind, to_id)
-)`);
-db.exec('CREATE INDEX IF NOT EXISTS catalogue_links_target_idx ON catalogue_links(to_kind, to_id, relation)');
-db.exec(`CREATE TABLE IF NOT EXISTS mylar_series (
-  comic_id TEXT PRIMARY KEY,
-  name TEXT,
-  publisher TEXT,
-  year TEXT,
-  status TEXT,
-  updated_at INTEGER NOT NULL
-)`);
-db.exec(`CREATE TABLE IF NOT EXISTS mylar_parts (
-  comic_id TEXT NOT NULL,
-  issue_id TEXT NOT NULL,
-  number TEXT,
-  name TEXT,
-  status TEXT NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (comic_id, issue_id)
-)`);
-db.exec('CREATE INDEX IF NOT EXISTS mylar_parts_comic_idx ON mylar_parts(comic_id, number)');
-// Things that happened while nobody was looking. A single-user server that has
-// to be watched to be useful is not much of a server: this is what the page
-// can show on the reader's return, and what gets pushed if a notify URL is
-// set. `key` is what makes an event happen once -- the watcher re-reads the
-// same rows every few minutes and must not announce them twice.
-db.exec(`CREATE TABLE IF NOT EXISTS events (
-  key TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,
-  title TEXT NOT NULL,
-  detail TEXT,
-  at INTEGER NOT NULL,
-  when_local TEXT
-)`);
-// `at` is Inkwell's own clock -- when it noticed. `when_local` is Mylar's wall
-// clock verbatim, for events that come from Mylar's records: it is written in
-// Mylar's timezone, which this container does not share and the reader's
-// browser does. Displaying the former for a Mylar event is how a book that
-// arrived at noon came to be listed at eight in the morning.
-try { db.exec('ALTER TABLE events ADD COLUMN when_local TEXT'); } catch { /* already there */ }
-db.exec('CREATE INDEX IF NOT EXISTS events_at_idx ON events(at DESC)');
-db.exec(`CREATE TABLE IF NOT EXISTS catalogue_covers (
-  volume_id TEXT PRIMARY KEY,
-  source_url TEXT NOT NULL,
-  file_name TEXT NOT NULL,
-  mime_type TEXT NOT NULL,
-  byte_size INTEGER NOT NULL,
-  fetched_at INTEGER NOT NULL
-)`);
-// This is intentionally a queue, not a crawler. Rows arrive only from a title
-// someone searched for, opened, requested, or a thread they chose to follow.
-// The server claims one row at a time and records both successful and delayed
-// work, so a ComicVine cooldown survives a restart without a retry storm.
-db.exec(`CREATE TABLE IF NOT EXISTS catalogue_enrichment (
-  kind TEXT NOT NULL,
-  id TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'pending',
-  attempts INTEGER NOT NULL DEFAULT 0,
-  available_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  last_error TEXT,
-  PRIMARY KEY (kind, id)
-)`);
-db.exec('CREATE INDEX IF NOT EXISTS catalogue_enrichment_ready_idx ON catalogue_enrichment(state, available_at)');
+
+// Every schema change belongs in this ordered list. The migration ledger is
+// committed in the same transaction as the change, so a failed migration never
+// lets the web process continue against a partially upgraded schema.
+const migrations = [
+  {
+    version: 1,
+    name: 'initial-cache-and-catalogue',
+    up() {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS catalogue_volumes (
+          id TEXT PRIMARY KEY, title TEXT NOT NULL, title_normalized TEXT NOT NULL,
+          aliases_normalized TEXT NOT NULL DEFAULT '', publisher TEXT,
+          publisher_normalized TEXT NOT NULL DEFAULT '', start_year TEXT,
+          issue_count INTEGER NOT NULL DEFAULT 0, fetched_at INTEGER NOT NULL, payload TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS catalogue_volumes_title_idx ON catalogue_volumes(title_normalized);
+        CREATE INDEX IF NOT EXISTS catalogue_volumes_publisher_idx ON catalogue_volumes(publisher_normalized);
+        CREATE TABLE IF NOT EXISTS catalogue_objects (
+          kind TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, name_normalized TEXT NOT NULL,
+          aliases_normalized TEXT NOT NULL DEFAULT '', publisher TEXT,
+          publisher_normalized TEXT NOT NULL DEFAULT '', fetched_at INTEGER NOT NULL, payload TEXT NOT NULL,
+          PRIMARY KEY (kind, id)
+        );
+        CREATE INDEX IF NOT EXISTS catalogue_objects_name_idx ON catalogue_objects(kind, name_normalized);
+        CREATE TABLE IF NOT EXISTS catalogue_links (
+          from_kind TEXT NOT NULL, from_id TEXT NOT NULL, relation TEXT NOT NULL,
+          to_kind TEXT NOT NULL, to_id TEXT NOT NULL, to_name TEXT,
+          PRIMARY KEY (from_kind, from_id, relation, to_kind, to_id)
+        );
+        CREATE INDEX IF NOT EXISTS catalogue_links_target_idx ON catalogue_links(to_kind, to_id, relation);
+        CREATE TABLE IF NOT EXISTS mylar_series (
+          comic_id TEXT PRIMARY KEY, name TEXT, publisher TEXT, year TEXT, status TEXT, updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mylar_parts (
+          comic_id TEXT NOT NULL, issue_id TEXT NOT NULL, number TEXT, name TEXT,
+          status TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (comic_id, issue_id)
+        );
+        CREATE INDEX IF NOT EXISTS mylar_parts_comic_idx ON mylar_parts(comic_id, number);
+        CREATE TABLE IF NOT EXISTS events (
+          key TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, detail TEXT, at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS events_at_idx ON events(at DESC);
+        CREATE TABLE IF NOT EXISTS catalogue_covers (
+          volume_id TEXT PRIMARY KEY, source_url TEXT NOT NULL, file_name TEXT NOT NULL,
+          mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, fetched_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS catalogue_enrichment (
+          kind TEXT NOT NULL, id TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0, available_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          last_error TEXT, PRIMARY KEY (kind, id)
+        );
+        CREATE INDEX IF NOT EXISTS catalogue_enrichment_ready_idx ON catalogue_enrichment(state, available_at);
+      `);
+    },
+  },
+  {
+    version: 2,
+    name: 'events-local-time',
+    up() {
+      const columns = db.prepare('PRAGMA table_info(events)').all().map((column) => column.name);
+      if (!columns.includes('when_local')) db.exec('ALTER TABLE events ADD COLUMN when_local TEXT');
+    },
+  },
+  {
+    version: 3,
+    name: 'installation-settings',
+    up() {
+      // This is deliberately application-owned state rather than a browser
+      // localStorage flag. A replacement browser must not re-open first-run
+      // setup for an already configured server, and an existing installation
+      // must not be silently treated as newly configured.
+      db.exec(`CREATE TABLE IF NOT EXISTS application_settings (
+        key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      // A pre-v3 database belongs to an installation that was already in use
+      // before a setup acknowledgement existed. Preserve that operational
+      // state on upgrade; only a genuinely new /config starts at setup.
+      if (databaseExisted) {
+        db.prepare('INSERT OR IGNORE INTO application_settings (key, value, updated_at) VALUES (?, ?, ?)')
+          .run('installation', JSON.stringify({ completedAt: new Date().toISOString(), access: 'legacy-upgrade' }), Date.now());
+      }
+    },
+  },
+  {
+    version: 4,
+    name: 'backfill-populated-installation-setup',
+    up() {
+      // v3 shipped briefly before the legacy marker above. A populated
+      // catalogue/request database is unambiguously an existing installation;
+      // do not unexpectedly lock it behind first-run setup on this upgrade.
+      const existing = db.prepare('SELECT value FROM application_settings WHERE key = ?').get('installation');
+      const state = db.prepare(`SELECT
+        (SELECT COUNT(*) FROM cache) +
+        (SELECT COUNT(*) FROM catalogue_volumes) +
+        (SELECT COUNT(*) FROM mylar_series) +
+        (SELECT COUNT(*) FROM events) AS count`).get();
+      if (!existing && Number(state.count) > 0) {
+        db.prepare('INSERT INTO application_settings (key, value, updated_at) VALUES (?, ?, ?)')
+          .run('installation', JSON.stringify({ completedAt: new Date().toISOString(), access: 'legacy-upgrade' }), Date.now());
+      }
+    },
+  },
+];
+
+const migrationLockPath = `${file}.migration.lock`;
+
+function acquireMigrationLock() {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(migrationLockPath, 'wx', 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      throw new Error(`Database migration is already in progress (${migrationLockPath}). Do not start a second Inkwell container; if a previous migration crashed, inspect the backup and remove this lock only after confirming no Inkwell process is running.`);
+    }
+    throw error;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+  return () => fs.rmSync(migrationLockPath, { force: true });
+}
+
+async function migrate() {
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL
+  )`);
+  const applied = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()
+    .map((row) => Number(row.version));
+  const latest = migrations.at(-1).version;
+  if (applied.some((version) => !migrations.some((migration) => migration.version === version))) {
+    throw new Error(`Database schema is newer than this Inkwell release (found migration ${Math.max(...applied)}, support ends at ${latest}). Restore a compatible image or backup; do not downgrade in place.`);
+  }
+  for (let version = 1; version <= Math.max(0, ...applied); version += 1) {
+    if (!applied.includes(version)) throw new Error(`Database migration ledger has a gap before version ${version}; refusing to start.`);
+  }
+  const pending = migrations.filter((migration) => !applied.includes(migration.version));
+  if (!pending.length) return { version: latest, backup: null };
+
+  const releaseLock = acquireMigrationLock();
+  let backupFile = null;
+  try {
+    // An online SQLite backup gives a self-consistent pre-migration snapshot,
+    // including WAL state, without asking users to stop the container manually.
+    if (databaseExisted) {
+      const backupDir = path.join(path.dirname(file), 'backups');
+      fs.mkdirSync(backupDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      backupFile = path.join(backupDir, `cache.pre-migration-v${Math.max(0, ...applied)}-${stamp}.db`);
+      await backup(db, backupFile);
+    }
+
+    db.exec('BEGIN EXCLUSIVE');
+    try {
+      // Re-read under SQLite's exclusive lock. A second container is also
+      // stopped by the sidecar lock before it can create a competing backup.
+      const lockedApplied = new Set(db.prepare('SELECT version FROM schema_migrations').all().map((row) => Number(row.version)));
+      for (const migration of migrations) {
+        if (lockedApplied.has(migration.version)) continue;
+        migration.up();
+        db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
+          .run(migration.version, migration.name, Date.now());
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch { /* transaction did not begin */ }
+      throw new Error(`Database migration failed; Inkwell did not start. Restore ${backupFile || 'your backup'} if needed. ${error.message}`);
+    }
+  } finally {
+    releaseLock();
+  }
+  return { version: latest, backup: backupFile };
+}
+
+const migration = await migrate();
+console.log(`Inkwell database schema v${migration.version}${migration.backup ? `; pre-migration backup: ${migration.backup}` : ''}`);
 
 const selectOne = db.prepare('SELECT value, at FROM cache WHERE key = ?');
+const selectSetting = db.prepare('SELECT value FROM application_settings WHERE key = ?');
+const upsertSetting = db.prepare(
+  'INSERT INTO application_settings (key, value, updated_at) VALUES (?, ?, ?) ' +
+  'ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+);
 const upsert = db.prepare(
   'INSERT INTO cache (key, value, at) VALUES (?, ?, ?) ' +
   'ON CONFLICT(key) DO UPDATE SET value = excluded.value, at = excluded.at'
@@ -245,7 +333,22 @@ const enrichmentSummary = db.prepare(`SELECT
 const selectRelatedVolumes = db.prepare(`SELECT v.payload FROM catalogue_links l
   JOIN catalogue_volumes v ON v.id = l.from_id
   WHERE l.from_kind = 'volume' AND l.to_kind = ? AND l.to_id = ? AND l.from_id != ?
-  ORDER BY v.fetched_at DESC LIMIT ?`);
+  -- Put substantial, recognisable runs ahead of whichever document happened
+  -- to be fetched last. This is stable and uses only data we actually have.
+  ORDER BY v.issue_count DESC, CAST(v.start_year AS INTEGER) DESC, v.fetched_at DESC
+  LIMIT ? OFFSET ?`);
+const countRelatedVolumes = db.prepare(`SELECT COUNT(*) AS total FROM catalogue_links l
+  JOIN catalogue_volumes v ON v.id = l.from_id
+  WHERE l.from_kind = 'volume' AND l.to_kind = ? AND l.to_id = ? AND l.from_id != ?`);
+// Discover needs one coherent local snapshot, not a query per card or a
+// provider call per rail. Keep the physical ComicVine payload intact here and
+// let discovery.js derive its deliberately small, reader-facing vocabulary.
+const selectDiscoverableVolumes = db.prepare(`SELECT payload FROM catalogue_volumes
+  WHERE (json_extract(payload, '$.kind') IS NULL OR json_extract(payload, '$.kind') = 'volume')
+    AND (json_extract(payload, '$.resource_type') IS NULL OR json_extract(payload, '$.resource_type') = 'volume')
+  ORDER BY fetched_at DESC`);
+const selectDiscoveryLinks = db.prepare(`SELECT from_id, to_kind, to_id, to_name FROM catalogue_links
+  WHERE from_kind = 'volume' AND to_kind IN ('character', 'person')`);
 // A character may be learned only as a credit on a volume, long before its own
 // ComicVine object has been opened. Lore line-ups can still use that real id;
 // throwing it away made X-Men resolve only Wolverine and Storm, then gave one
@@ -281,6 +384,24 @@ function mergedPayload(previous, next) {
   return merged;
 }
 
+function volumePayload(item) {
+  if (!item?.id || !item?.name) return false;
+  if (item.resource_type) return item.resource_type === 'volume';
+  // Detail and list requests ask ComicVine for resource_type, but retain this
+  // structural fallback for old cached volume documents. A character/team can
+  // never supply a volume's issue-count or issue boundary fields.
+  return Object.hasOwn(item, 'count_of_issues')
+    || Object.hasOwn(item, 'first_issue') || Object.hasOwn(item, 'last_issue');
+}
+
+let discoverySnapshot = null;
+let discoveryRevision = 0;
+
+function invalidateDiscoverySnapshot() {
+  discoveryRevision += 1;
+  discoverySnapshot = null;
+}
+
 // The only records eligible for this table are ComicVine volume records. Other
 // search resources (characters, people, events) have different identity rules.
 export function rememberVolumes(items) {
@@ -290,7 +411,7 @@ export function rememberVolumes(items) {
   db.exec('BEGIN');
   try {
     for (const item of rows) {
-      if (!item?.id || !item?.name || (item.resource_type && item.resource_type !== 'volume')) continue;
+      if (!volumePayload(item)) continue;
       const old = selectVolume.get(String(item.id));
       let previous = null;
       try { previous = old ? JSON.parse(old.payload) : null; } catch { /* replace corrupt data */ }
@@ -308,6 +429,7 @@ export function rememberVolumes(items) {
     db.exec('ROLLBACK');
     throw error;
   }
+  if (stored) invalidateDiscoverySnapshot();
   return stored;
 }
 
@@ -363,6 +485,24 @@ export function rememberObjects(resource, items) {
     db.exec('ROLLBACK');
     throw error;
   }
+  invalidateDiscoverySnapshot();
+}
+
+// The catalogue is intentionally reader-sized rather than a scraped global
+// database. Caching this parsed snapshot avoids multiplying SQLite/JSON work
+// by every candidate rail in a Discover batch; writers invalidate it exactly
+// when a detail record or observed relationship changes.
+export function discoveryCatalogue() {
+  if (discoverySnapshot) return discoverySnapshot;
+  const volumes = selectDiscoverableVolumes.all().flatMap(({ payload }) => {
+    try { return [JSON.parse(payload)]; } catch { return []; }
+  });
+  const links = selectDiscoveryLinks.all().map((row) => ({
+    fromKind: 'volume', fromId: String(row.from_id), toKind: String(row.to_kind),
+    toId: String(row.to_id), toName: row.to_name ?? null,
+  }));
+  discoverySnapshot = { revision: discoveryRevision, volumes, links };
+  return discoverySnapshot;
 }
 
 export function getVolume(id) {
@@ -487,14 +627,30 @@ export function findObjectsByName(kind, name) {
   });
 }
 
-// Relationship rails only use observed credits from stored volume details.
+// Relationship shelves only use observed credits from stored volume details.
 // They never pretend a keyword match is a genuine creator/character credit.
+// The total lets entity pages continue through verified records rather than
+// silently stopping at an arbitrary first row of cards.
+export function relatedVolumePage(kind, id, {
+  exceptVolumeId = '', limit = 48, offset = 0,
+} = {}) {
+  const targetKind = String(kind);
+  const targetId = String(id);
+  const except = String(exceptVolumeId);
+  const size = Math.min(96, Math.max(1, Number(limit) || 48));
+  const rows = selectRelatedVolumes.all(targetKind, targetId, except, size, Math.max(0, Number(offset) || 0));
+  return {
+    total: Number(countRelatedVolumes.get(targetKind, targetId, except)?.total) || 0,
+    items: rows.flatMap(({ payload }) => {
+      try { return [JSON.parse(payload)]; } catch { return []; }
+    }),
+  };
+}
+
+// Detail sheets need a compact related strip. Keep this wrapper while entity
+// pages use relatedVolumePage() for counted, paginated results.
 export function relatedVolumes(kind, id, exceptVolumeId = '', limit = 12) {
-  const rows = selectRelatedVolumes.all(String(kind), String(id), String(exceptVolumeId),
-    Math.min(48, Math.max(1, Number(limit) || 12)));
-  return rows.flatMap(({ payload }) => {
-    try { return [JSON.parse(payload)]; } catch { return []; }
-  });
+  return relatedVolumePage(kind, id, { exceptVolumeId, limit }).items;
 }
 
 // A deliberately broad candidate retrieval; Inkwell's transparent relevance
@@ -680,6 +836,17 @@ export function read(key) {
   }
 }
 
+export function readSetting(key) {
+  const row = selectSetting.get(String(key));
+  if (!row) return null;
+  try { return JSON.parse(row.value); } catch { return null; }
+}
+
+export function writeSetting(key, value) {
+  upsertSetting.run(String(key), JSON.stringify(value), Date.now());
+  return value;
+}
+
 export function write(key, value) {
   upsert.run(key, JSON.stringify(value), Date.now());
   return value;
@@ -747,4 +914,18 @@ export function eager(key, maxAge, produce) {
     pending: !hit,
     refreshing: stale && Boolean(hit),
   };
+}
+
+// Called only after the HTTP server has stopped accepting requests. SQLite WAL
+// recovery protects against an abrupt power loss, but an orderly container
+// update should checkpoint and close the database before PID 1 exits.
+export function close() {
+  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (error) {
+    console.warn(`Could not checkpoint Inkwell SQLite database during shutdown: ${error.message}`);
+  }
+  db.close();
+}
+
+export function databaseLifecycle() {
+  return { file, schemaVersion: migration.version };
 }

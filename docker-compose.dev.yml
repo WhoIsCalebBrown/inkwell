@@ -1,0 +1,12 @@
+# Developer override: build the working tree instead of pulling a release.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# Everything else -- ports, mounts, environment -- comes from docker-compose.yml,
+# so a change tested here is a change tested in the shape people deploy.
+services:
+  inkwell:
+    build: .
+    # A separate tag, so a local build can never be mistaken for -- or
+    # overwrite -- a pulled release image.
+    image: inkwell:dev
+    # Never reach for the registry looking for inkwell:dev.
+    pull_policy: build

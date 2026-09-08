@@ -22,7 +22,10 @@ Four files carry everything. There is no build step, no framework, no bundler.
 | `public/app.js` | ~1470 | Whole front end: hash router, routes, render functions |
 | `public/styles.css` | ~520 | Whole stylesheet |
 
-`metron.js` and `enrich.js` are optional supplements. `tools/` is scratch.
+`metron.js` and `enrich.js` are optional supplements. Most of `tools/` is
+scratch, but `verify-docker-smoke.mjs` is not: CI runs it, and it is the only
+thing that proves a fresh install, a restore and an image replacement still
+keep `/config`.
 
 The browser gets ES modules straight from disk. `public/index.html` links the two
 assets with a `?v=` query — **bump both when you change them** or the browser
@@ -41,6 +44,10 @@ appear in the interface** — the UI says Character, Creator, Team or Event.
 The design canvas lives in `design/*.dc.html` (artboards) plus `design/canvas.json`.
 Read those before changing layout — they are the intent. `design/panel-comic-app.html`
 is a 2.5MB published bundle; ignore it, the artboards are the source.
+
+Discovery rail definitions, provenance rules, selection behavior and the
+metadata contract live in `docs/discovery-rails.md`. Read it before changing
+Discover, its APIs, or catalogue enrichment for recommendations.
 
 ## Non-negotiable invariants
 
@@ -224,6 +231,40 @@ The app is used on desktop, iPad and phone. Assume the iPad is the slow one.
   `pendingVeil` and appended to `document.body` by `armVeil()` after the route
   renders — never returned inline, because routes that rebuild the view's
   innerHTML would wipe it, and a fixed overlay does not belong in the scroller.
+
+## Releasing, and what Unraid actually watches
+
+`docker-compose.yml` deploys the published image; `docker-compose.dev.yml` is
+the override that builds the working tree. `test/release-contract.test.mjs`
+asserts the four files that must agree — Dockerfile, release workflow, Compose,
+Unraid template — because nothing at runtime notices when they drift and the
+failure lands on a stranger's server.
+
+- **A tag publishes; a commit does not.** `.github/workflows/release.yml` runs
+  only on `v[0-9]+.[0-9]+.[0-9]+` (and a `-suffix` prerelease). It calls
+  `ci.yml` rather than repeating it, and refuses the release if the tag and
+  `package.json`'s version disagree — the image's version label comes from the
+  tag, so they cannot be allowed to contradict each other.
+- **A prerelease must never claim `latest`, `1` or `1.2`.** Those three are
+  gated on `!contains(github.ref_name, '-')` explicitly rather than left to
+  metadata-action's defaults, so the rule is readable where it applies.
+- **Unraid follows the image digest behind the tag in `<Repository>`, never a
+  Git commit.** It HEADs the manifest anonymously and compares
+  `Docker-Content-Digest` with the digest it already pulled, so the tag must
+  keep moving (`:latest`) and **the GHCR package must be public** — a private
+  package answers nothing and Update is never offered.
+- **`[PORT:n]` is the container port.** Unraid replaces it with the host port
+  published from container port `n` (`DockerTemplates::getControlURL`). The
+  template and the Compose `net.unraid.docker.webui` label therefore say 3000,
+  not 3013: naming the host port happens to work until someone changes it, and
+  then the WebUI link points at a port nothing is listening on.
+- **Update replaces the image and recreates the container from the saved
+  template**, so `/config` — a host path in that template — survives. That is
+  the whole promise of the release path, and `tools/verify-docker-smoke.mjs`
+  proves it against a second, genuinely different image build.
+- An optional `<Config Type="Path">` left empty is skipped by Unraid; an empty
+  `Type="Variable"` is still passed, as an empty string. Optional mounts are
+  safe to offer; optional variables must tolerate `''`.
 
 ## Style
 

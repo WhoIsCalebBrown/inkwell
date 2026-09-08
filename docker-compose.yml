@@ -1,26 +1,41 @@
-# Copy .env.example to .env, set the two or three values for your machine, then
-#   docker compose up -d --build
-# Nothing here is specific to the machine Inkwell was written on: every address
-# and path is an environment variable with a single-host default.
+# Copy .env.example to .env, set the values for your machine, then
+#   docker compose pull && docker compose up -d
+# This file deploys the published image. To build the working tree instead,
+# add the developer override:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# The image is intentionally one process: HTTP server, SQLite, enrichment and
+# the Mylar watcher. Mylar/Komga remain separately managed services.
 services:
   inkwell:
-    build: .
-    container_name: inkwell
+    # Pin INKWELL_VERSION to an exact release (1.2.3) to control when you
+    # upgrade; the default tracks the newest stable release.
+    image: ghcr.io/whoiscalebbrown/inkwell:${INKWELL_VERSION:-latest}
     restart: unless-stopped
     labels:
       # Optional, and only meaningful on Unraid: it adds an Open WebUI action
-      # to the Docker page for a Compose-managed container.
-      net.unraid.docker.webui: http://[IP]:[PORT:3013]
+      # to the Docker page for a Compose-managed container. Unraid substitutes
+      # the host port published from this container port, so it must be 3000
+      # -- naming the host port here breaks the link for anyone who changes it.
+      net.unraid.docker.webui: http://[IP]:[PORT:3000]
+      # Optional Unraid Docker-page icon. Set this to a host-visible image path
+      # or URL in an Unraid-specific .env; ordinary Docker ignores this label.
+      net.unraid.docker.icon: ${INKWELL_UNRAID_ICON:-}
     read_only: true
     security_opt:
       - no-new-privileges:true
     environment:
       # Mylar's API, including the trailing /api.
-      MYLAR_URL: ${MYLAR_URL:-http://127.0.0.1:8090/api}
+      MYLAR_URL: ${MYLAR_URL:-}
       # Read from the directory mounted below: config.ini holds both API keys,
       # mylar.db holds the search and download state no API exposes.
       MYLAR_CONFIG: /run/mylar/config.ini
       MYLAR_DB: /run/mylar/mylar.db
+      # Advanced alternative for installations that cannot mount Mylar
+      # appdata. Keep these server-side values out of the browser and source
+      # repository. The mounted config remains the preferred normal setup.
+      MYLAR_API_KEY: ${MYLAR_API_KEY:-}
+      COMICVINE_API_KEY: ${COMICVINE_API_KEY:-}
+      MYLAR_WEB_URL: ${MYLAR_WEB_URL:-}
       # Komga is the only system that knows what actually landed on disk; Mylar
       # reports every watched series as 'Active' whether or not it downloaded.
       # Optional: without it every title reads as "searching".
@@ -32,13 +47,20 @@ services:
       # Where the reader's own browser can reach Komga, if that differs from
       # the address this server uses. The "Read" links point here.
       KOMGA_PUBLIC_URL: ${KOMGA_PUBLIC_URL:-}
-      CACHE_DB: /data/cache.db
-      COVER_DIR: /data/covers
+      # The entrypoint initializes this mount, then drops privileges before
+      # Node starts. These numeric IDs work with Docker bind mounts and Unraid.
+      CONFIG_DIR: /config
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-002}
       # Set both to put Inkwell behind a password. Leave them empty for a
       # LAN-only install; see the security note in the README before exposing
       # this to anything wider.
       INKWELL_USER: ${INKWELL_USER:-}
       INKWELL_PASSWORD: ${INKWELL_PASSWORD:-}
+      # Empty means Express ignores all X-Forwarded-* headers. Configure only
+      # the IP/CIDR of a proxy that directly connects to this container.
+      INKWELL_TRUSTED_PROXIES: ${INKWELL_TRUSTED_PROXIES:-}
       # Where to push "your book arrived" and "the download queue has stopped".
       # Any URL that accepts a POST: an ntfy topic, a Discord webhook, your own
       # receiver. The shape is guessed from the URL; the format variable
@@ -55,19 +77,20 @@ services:
       # only place Mylar records which providers have searched, when, and when
       # the next sweep is due. Inkwell never writes here -- mylar.db is
       # journal_mode=delete, so reading it needs no write access at all.
-      - ${MYLAR_DIR:?set MYLAR_DIR in .env to Mylar's data directory, the one holding config.ini}:/run/mylar:ro
+      # The placeholder permits a provider-free boot and direct API-key
+      # configuration. Set MYLAR_DIR for the normal Mylar integration.
+      - ${MYLAR_DIR:-./config/mylar-placeholder}:/run/mylar:ro
       # Komf's config, if you run it: the Komga login stays where it already is.
       # Defaults to a placeholder file so this mount always resolves.
       - ${KOMF_CONFIG:-./config/komf-placeholder.yml}:/run/komf/application.yml:ro
-      # The container is read-only, so the catalogue needs a writable home. It
-      # must outlive the container: rebuilding costs hundreds of slow ComicVine
-      # calls and every cover all over again.
-      - inkwell-cache:/data
+      # This is the canonical persistent mount. Existing installations can set
+      # INKWELL_VOLUME=inkwell-cache and keep their current data: the old
+      # cache.db and covers are at the volume root in both layouts.
+      - inkwell-config:/config
     ports:
-      # Binds to localhost by default, because Inkwell ships with no password.
-      # Set INKWELL_BIND to a LAN address once you have read the README's
-      # security note.
-      - ${INKWELL_BIND:-127.0.0.1}:${INKWELL_PORT:-3013}:3000
+      # Plain HTTP is for a trusted LAN. Use reverse-proxy/Tailscale/tunnel TLS
+      # for remote access; Inkwell never terminates HTTPS itself.
+      - ${INKWELL_BIND:-0.0.0.0}:${INKWELL_PORT:-3013}:3000
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/ready || exit 1"]
       interval: 30s
@@ -76,7 +99,7 @@ services:
       start_period: 20s
 
 volumes:
-  inkwell-cache:
-    # Named explicitly so an existing installation can keep the volume it
-    # already has by setting INKWELL_VOLUME, rather than starting empty.
-    name: ${INKWELL_VOLUME:-inkwell-cache}
+  inkwell-config:
+    # New installs get an obvious persistent-volume name. Existing installs
+    # must set INKWELL_VOLUME to their current volume name before upgrading.
+    name: ${INKWELL_VOLUME:-inkwell-config}

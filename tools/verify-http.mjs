@@ -9,6 +9,12 @@ const headers = process.env.INKWELL_USER && process.env.INKWELL_PASSWORD
   : {};
 const checks = [
   ['ready', '/api/ready', 200, (body) => body.ok === true],
+  ['setup status', '/api/setup', 200, (body) => typeof body.ready === 'boolean' && typeof body.discovery?.configured === 'boolean'],
+  ['setup protects writes', '/api/cache/clear', 428, (body) => body.code === 'setup_required', { method: 'POST', headers: { 'X-Inkwell': '1' } }],
+  ['discover batch', '/api/discover?batch=1&seed=httpcheck', 200,
+    (body) => Array.isArray(body.sections) && Array.isArray(body.served) && typeof body.exhausted === 'boolean'],
+  ['unknown discovery rail', '/api/discover/rail/not-a-real-rail?seed=httpcheck', 404,
+    (body) => /unknown|unavailable/i.test(body.error || '')],
   ['empty thread search', '/api/threads', 200, (body) => Array.isArray(body.groups) && body.total === 0],
   ['browse thread index', '/api/threads/browse', 200, (body) => Array.isArray(body.groups)],
   ['known lines', '/api/lines', 200, (body) => body.lines && typeof body.lines === 'object'],
@@ -18,9 +24,9 @@ const checks = [
 ];
 
 const failures = [];
-for (const [name, path, expectedStatus, assertion] of checks) {
+for (const [name, path, expectedStatus, assertion, options = {}] of checks) {
   try {
-    const response = await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(20_000) });
+    const response = await fetch(`${base}${path}`, { ...options, headers: { ...headers, ...options.headers }, signal: AbortSignal.timeout(20_000) });
     const body = await response.json().catch(() => ({}));
     if (response.status !== expectedStatus || !assertion(body)) {
       failures.push({ name, status: response.status, expectedStatus, body });

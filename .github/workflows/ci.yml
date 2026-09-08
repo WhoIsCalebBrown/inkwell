@@ -1,0 +1,135 @@
+# Every check that must pass before code is merged, and the same checks the
+# release workflow runs before it publishes anything. It is callable so a tag
+# build cannot skip them or drift from them.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+# A tag build calls this workflow; cancelling the tag's run because a later
+# push shares a group would abandon a release mid-flight, so the group is keyed
+# on the full ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Tests and static contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # CI runs the exact Node the image ships, read from the Dockerfile, so a
+      # base-image bump cannot leave the tests on a different runtime than
+      # production. Inkwell uses node:test and node:sqlite, both of which have
+      # moved between minors.
+      - name: Read the runtime Node version from the Dockerfile
+        id: node
+        run: |
+          version="$(sed -n 's/^FROM node:\([0-9][0-9.]*\)-alpine.*/\1/p' Dockerfile | head -1)"
+          if [ -z "$version" ]; then
+            echo "::error file=Dockerfile::Could not read a pinned node:<version>-alpine base image"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+          cache: npm
+
+      - name: Install from the lockfile
+        run: npm ci
+
+      # There is no bundler or type checker, so a parse of every shipped module
+      # is the whole static baseline. public/*.js never runs under Node, and
+      # this is the only thing that would catch a syntax error in it.
+      - name: Parse every shipped module
+        run: |
+          failed=0
+          for file in *.js public/*.js tools/*.mjs test/*.mjs; do
+            node --check "$file" || { echo "::error file=$file::failed to parse"; failed=1; }
+          done
+          exit $failed
+
+      - name: Check the entrypoint shell
+        run: sh -n docker-entrypoint.sh
+
+      - name: Unit, storage, migration and setup tests
+        run: npm test
+
+      # The named HTTP contract, against a real server with no providers
+      # configured -- the state a fresh install is in before setup.
+      - name: Provider-free HTTP contract
+        run: |
+          config="$(mktemp -d)"
+          CONFIG_DIR="$config" PORT=3099 node server.js > server.log 2>&1 &
+          server=$!
+          trap 'kill $server 2>/dev/null || true' EXIT
+          for _ in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:3099/api/ready >/dev/null 2>&1 && break
+            sleep 1
+          done
+          INKWELL_URL=http://127.0.0.1:3099 npm run verify:http || { cat server.log; exit 1; }
+
+      # Production dependencies are what ship in the image; dev-only advisories
+      # must not fail a release.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      # `docker compose config` is the only real validator for the deployment
+      # files, and it resolves the release image reference at the same time.
+      - name: Validate the Compose files
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+
+      # Unraid parses this XML with DOMDocument; a template that is not
+      # well-formed silently fails to install.
+      - name: Validate the Unraid template XML
+        run: python3 -c "import xml.etree.ElementTree as ET; ET.parse('unraid/inkwell.xml')"
+
+  image:
+    name: Image build and container smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The smoke harness is a plain Node script; pin it to the same runtime
+      # the image ships rather than whatever the runner happens to carry.
+      - name: Read the runtime Node version from the Dockerfile
+        id: node
+        run: echo "version=$(sed -n 's/^FROM node:\([0-9][0-9.]*\)-alpine.*/\1/p' Dockerfile | head -1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+
+      # Emulation for the arm64 half of the manifest. The image has no native
+      # dependencies, so an emulated build is only as slow as npm ci.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds and runs the real production image: fresh volume, fresh bind
+      # mount, non-root PID 1, backup/restore, and an image replacement against
+      # a populated /config -- which is what an Unraid update does.
+      - name: Clean-install, persistence and image-replacement smoke
+        run: npm run verify:docker
+
+      # Proves the published manifest's architectures build before a tag does
+      # it for real. Nothing is pushed here.
+      - name: Build both release architectures
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

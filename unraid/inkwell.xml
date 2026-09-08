@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Inkwell</Name>
+  <!-- A moving tag is what makes Unraid's update check work: it compares the
+       digest this tag points at against the one already pulled. Pinning a
+       version here (1.2.3) is supported, but it will never offer an update. -->
+  <Repository>ghcr.io/whoiscalebbrown/inkwell:latest</Repository>
+  <Registry>https://github.com/WhoIsCalebBrown/inkwell/pkgs/container/inkwell</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/WhoIsCalebBrown/inkwell/issues</Support>
+  <Project>https://github.com/WhoIsCalebBrown/inkwell</Project>
+  <ReadMe>https://github.com/WhoIsCalebBrown/inkwell/blob/main/docs/self-hosting.md</ReadMe>
+  <Icon>https://raw.githubusercontent.com/WhoIsCalebBrown/inkwell/main/public/inkwell-favicon.png</Icon>
+  <Overview>
+    Inkwell is a single-user comic request front end for Mylar. It stores all
+    of its own state under /config, reads Mylar appdata read-only, and does not
+    access comic files directly. Mylar and a ComicVine credential are required;
+    Komga is optional. Read docs/self-hosting.md before enabling remote access.
+    Updating this container replaces the image only: everything in the AppData
+    path mapped to /config survives.
+  </Overview>
+  <Requires>An existing Mylar3 installation, with its appdata directory (config.ini and mylar.db) readable on this server, and the ComicVine key Mylar already holds. Komga is optional.</Requires>
+  <!-- Inkwell runs unprivileged after its entrypoint initializes /config, so
+       it never needs to gain privileges afterwards. -->
+  <ExtraParams>--security-opt=no-new-privileges:true</ExtraParams>
+  <!-- 3000 is the container port. Unraid substitutes whatever host port is
+       published from it, so this link keeps working when the port below is
+       changed; naming the host port here would not. -->
+  <WebUI>http://[IP]:[PORT:3000]</WebUI>
+  <Category>MediaApp:Other</Category>
+  <TemplateURL>https://raw.githubusercontent.com/WhoIsCalebBrown/inkwell/main/unraid/inkwell.xml</TemplateURL>
+  <Config Name="WebUI Port" Target="3000" Default="3013" Mode="tcp" Description="Trusted-LAN HTTP port. For remote access, put Inkwell behind HTTPS and authentication." Type="Port" Display="always" Required="true" Mask="false">3013</Config>
+  <Config Name="AppData" Target="/config" Default="/mnt/user/appdata/inkwell" Mode="rw" Description="Required Inkwell application data: SQLite, setup state, covers, and migration backups. Kept on the host, so it survives container updates and replacement. Use local Unraid appdata, not an SMB/NFS share." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/inkwell</Config>
+  <Config Name="Mylar AppData" Target="/run/mylar" Default="/mnt/user/appdata/mylar3" Mode="ro" Description="Required Mylar appdata directory containing config.ini and mylar.db. Read-only; this is not your comics/media folder." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/mylar3</Config>
+  <Config Name="Mylar API URL" Target="MYLAR_URL" Default="http://[IP]:8090/api" Mode="" Description="Required address Inkwell can use to reach Mylar, including /api. Use a LAN address or Docker service name, not 127.0.0.1 unless both share a network namespace." Type="Variable" Display="always" Required="true" Mask="false">http://[IP]:8090/api</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID that owns Inkwell /config. Unraid default is 99." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID that owns Inkwell /config. Unraid default is 100." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="002" Mode="" Description="Permissions mask for files created in /config." Type="Variable" Display="advanced" Required="true" Mask="false">002</Config>
+  <Config Name="Shared username" Target="INKWELL_USER" Default="" Mode="" Description="Optional shared HTTP Basic username. Recommended with remote/proxy access." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Shared password" Target="INKWELL_PASSWORD" Default="" Mode="" Description="Optional shared HTTP Basic password. Inkwell has no public registration or separate user accounts." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Komga URL" Target="KOMGA_URL" Default="" Mode="" Description="Optional. Lets Inkwell show when a requested title arrived in your reading library." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Komga username" Target="KOMGA_USER" Default="" Mode="" Description="Optional direct Komga login when no read-only Komf config is mounted." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Komga password" Target="KOMGA_PASSWORD" Default="" Mode="" Description="Optional direct Komga password." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Komf config path" Target="KOMGA_CONFIG" Default="/run/komf/application.yml" Mode="" Description="Where Inkwell looks inside the container for the Komf config mapped below. Leave at the default. If nothing is mapped there, Inkwell falls back to the Komga username and password above." Type="Variable" Display="advanced" Required="false" Mask="false">/run/komf/application.yml</Config>
+  <Config Name="Komf config" Target="/run/komf/application.yml" Default="" Mode="ro" Description="Optional read-only path to Komf's application.yml. If you already run Komf, Inkwell reads the Komga login from it instead of asking for one above. Leave empty if you do not run Komf." Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Komga browser URL" Target="KOMGA_PUBLIC_URL" Default="" Mode="" Description="Optional. Where your own browser reaches Komga, if that differs from the address above. The Read links point here." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Notification URL" Target="INKWELL_NOTIFY_URL" Default="" Mode="" Description="Optional. Any URL that accepts a POST — an ntfy topic, a Discord webhook, your own receiver — for arrivals and stalled download queues. Arrivals are recorded and shown in the app either way." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Metron token" Target="METRON_TOKEN" Default="" Mode="" Description="Optional metron.cloud API token for supplementary story-arc data." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Trusted proxies" Target="INKWELL_TRUSTED_PROXIES" Default="" Mode="" Description="Optional. Comma-separated IPs/CIDRs of a reverse proxy that connects directly to Inkwell. Leave empty unless you run one: forwarded headers are never trusted by default." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+</Container>

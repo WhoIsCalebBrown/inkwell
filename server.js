@@ -9,16 +9,31 @@ import { fileURLToPath } from 'node:url';
 import {
   cached, read as cacheRead, write as cacheWrite, clear as clearCache, stats as cacheStats,
   findVolumes, rememberVolumes, findObjects, listObjects, publisherArt,
-  decades, decadeVolumes, findObjectByName, findObjectsByName, findLinkedObjectIdByName, getObject, getVolume, rememberObjects, relatedVolumes,
+  decades, decadeVolumes, findObjectByName, findObjectsByName, findLinkedObjectIdByName, getObject, getVolume, rememberObjects, relatedVolumes, relatedVolumePage,
   getMylarParts, rememberMylarParts, setMylarPartStatus, listMylarParts, forgetMylarSeries, getCover, rememberCover,
   enqueueEnrichment, claimNextEnrichment, completeEnrichment, postponeEnrichment, enrichmentStats,
-  recordEvent, listEvents,
+  recordEvent, listEvents, discoveryCatalogue, close as closeStore, databaseLifecycle,
+  readSetting, writeSetting,
 } from './store.js';
 import * as metron from './metron.js';
 import * as lore from './lore.js';
 import { supplement } from './enrich.js';
+import {
+  allRailDefinitions, buildDiscoveryCatalogue, buildDiscoveryContext, discoveryVersion,
+  resolveRail, selectRails,
+} from './discovery.js';
 
 const app = express();
+let shuttingDown = false;
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  // These low-risk defaults work for the static single-page UI without making
+  // assumptions about a proxy's TLS policy or an operator's hostname.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
+});
 
 // Inkwell's JSON is long lists of volumes -- a 96-title page runs to ~150KB of
 // highly repetitive text that compresses by roughly 85%. Express ships no
@@ -78,12 +93,34 @@ if (fs.existsSync(envFile)) {
     }
   } catch { /* a local env file is optional */ }
 }
+// Express does not trust X-Forwarded-* headers unless this explicit list is
+// configured. Most of Inkwell does not need forwarded headers today, but this
+// keeps a future proxy-aware feature from accidentally trusting every client.
+const trustedProxies = String(process.env.INKWELL_TRUSTED_PROXIES || '')
+  .split(',').map((value) => value.trim()).filter(Boolean);
+app.set('trust proxy', trustedProxies.length ? trustedProxies : false);
 const port = Number(process.env.PORT || 3000);
 // Everything below points at localhost by default. Nothing in this repository
 // should carry the address of the machine it happens to have been written on:
 // a default that works out of the box for a single-host install, and an
 // environment variable for every other shape of network.
-const mylarUrl = (process.env.MYLAR_URL || 'http://127.0.0.1:8090/api').replace(/\/$/, '');
+function httpUrl(value) {
+  const text = String(value || '').trim().replace(/\/$/, '');
+  if (!text) return '';
+  try {
+    const parsed = new URL(text);
+    return ['http:', 'https:'].includes(parsed.protocol) ? text : '';
+  } catch {
+    return '';
+  }
+}
+
+// There is no universal safe Mylar address in a container. In particular,
+// 127.0.0.1 points at Inkwell itself, not at a separately deployed Mylar.
+// Keep an absent or malformed optional integration out of the boot path and
+// surface it to setup instead of attempting a misleading localhost request.
+const configuredMylarUrl = String(process.env.MYLAR_URL || '').trim();
+const mylarUrl = httpUrl(configuredMylarUrl);
 const configPath = process.env.MYLAR_CONFIG || '/run/mylar/config.ini';
 const komgaConfigPath = process.env.KOMGA_CONFIG || '';
 
@@ -120,8 +157,13 @@ const komgaAuth = komgaCreds
 const cache = new Map();
 // Covers are media, not API responses. Keep them on the same persistent data
 // volume as SQLite, fetched lazily only when a card enters the viewport.
-const coverDir = process.env.COVER_DIR || path.join(root, 'data', 'covers');
-fs.mkdirSync(coverDir, { recursive: true });
+const configDir = process.env.CONFIG_DIR || path.join(root, 'data');
+const coverDir = process.env.COVER_DIR || path.join(configDir, 'covers');
+try {
+  fs.mkdirSync(coverDir, { recursive: true });
+} catch (error) {
+  throw new Error(`Inkwell cannot create its persistent cover directory at ${coverDir}. Ensure /config is mounted and writable. ${error.message}`);
+}
 const coverInflight = new Map();
 
 // ComicVine detail responses are enormous — a single character document is
@@ -148,21 +190,55 @@ const THREAD_FIELDS = {
 
 function apiKey() {
   if (process.env.MYLAR_API_KEY) return process.env.MYLAR_API_KEY.trim();
-  const match = fs.readFileSync(configPath, 'utf8').match(/^\s*api_key\s*=\s*(.+)\s*$/im);
-  if (!match) throw new Error('Could not find Mylar api_key in the mounted configuration file.');
-  return match[1].trim();
+  const value = mylarConfigValue('api_key');
+  if (!value) throw new Error('Could not find Mylar api_key in the mounted configuration file.');
+  return value;
 }
 
 function comicVineKey() {
   if (process.env.COMICVINE_API_KEY) return process.env.COMICVINE_API_KEY.trim();
-  const match = fs.readFileSync(configPath, 'utf8').match(/^\s*comicvine_api\s*=\s*(.+)\s*$/im);
-  if (!match) throw new Error('Could not find the ComicVine key in the mounted Mylar configuration file.');
-  return match[1].trim();
+  const value = mylarConfigValue('comicvine_api');
+  if (!value) throw new Error('Could not find the ComicVine key in the mounted Mylar configuration file.');
+  return value;
 }
 
-async function mylar(command, params = {}) {
+function mylarConfigValue(field) {
+  try {
+    const match = fs.readFileSync(configPath, 'utf8').match(new RegExp(`^\\s*${field}\\s*=\\s*(.+)\\s*$`, 'im'));
+    return match?.[1]?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function canRead(file) {
+  try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; }
+}
+
+// This deliberately validates configuration shape without making network calls
+// or returning paths/secrets to the browser. Mylar can be temporarily down and
+// Komga is optional; neither condition should stop a safe Inkwell boot.
+function setupStatus() {
+  const mountedMylarConfig = canRead(configPath);
+  const mylarCredential = Boolean(process.env.MYLAR_API_KEY?.trim() || mylarConfigValue('api_key'));
+  const comicVineCredential = Boolean(process.env.COMICVINE_API_KEY?.trim() || mylarConfigValue('comicvine_api'));
+  const installation = readSetting('installation');
+  const configurationReady = comicVineCredential && mylarCredential && Boolean(mylarUrl);
+  return {
+    firstRun: !installation?.completedAt,
+    completed: Boolean(installation?.completedAt),
+    discovery: { configured: comicVineCredential },
+    requests: { configured: mylarCredential, endpoint: Boolean(mylarUrl), endpointValid: Boolean(mylarUrl) },
+    mylarConfig: { readable: mountedMylarConfig },
+    authentication: authUser && authPassword ? 'basic' : 'trusted-lan',
+    ready: configurationReady,
+  };
+}
+
+async function mylar(command, params = {}, { timeoutMs = 120_000 } = {}) {
+  if (!mylarUrl) throw new Error('Mylar API URL is not configured or is invalid. Set MYLAR_URL to the address ending in /api.');
   const query = new URLSearchParams({ apikey: apiKey(), cmd: command, ...params });
-  const response = await fetch(`${mylarUrl}?${query}`, { signal: AbortSignal.timeout(120_000) });
+  const response = await fetch(`${mylarUrl}?${query}`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`Mylar returned HTTP ${response.status}`);
   // A few Mylar write commands legitimately answer with plain "OK" rather
   // than JSON. Treat that as success; trying response.json() made a successful
@@ -252,11 +328,16 @@ async function runEnrichmentOnce() {
 function wakeEnrichment() {
   setTimeout(() => runEnrichmentOnce().catch(() => {}), 250).unref?.();
 }
-setInterval(() => runEnrichmentOnce().catch(() => {}), ENRICHMENT_INTERVAL_MS).unref();
+const enrichmentTimer = setInterval(() => runEnrichmentOnce().catch(() => {}), ENRICHMENT_INTERVAL_MS);
+enrichmentTimer.unref();
 
 function bootstrapDiscoveryIfEmpty() {
   const mirror = cacheStats();
   if (mirror.volumes > 0 || mirror.enrichment.done > 0 || mirror.enrichment.pending > 0) return;
+  if (!setupStatus().discovery.configured) {
+    console.warn('First-run discovery is waiting for a ComicVine credential. Configure Mylar appdata or COMICVINE_API_KEY, then restart Inkwell.');
+    return;
+  }
   enqueueEnrichment('seed', FIRST_RUN_DISCOVERY_SEEDS, 'first-run-discovery');
   wakeEnrichment();
 }
@@ -550,6 +631,25 @@ function shapedMylarParts(local) {
   };
 }
 
+// Mylar's queueIssue command starts a provider search and can hold its API
+// response open until that search finishes. A request should acknowledge the
+// handoff promptly; a timeout here is not evidence that the command failed.
+const MYLAR_QUEUE_TIMEOUT_MS = 8_000;
+async function queueMylarIssue(comicId, issueId) {
+  try {
+    await mylar('queueIssue', { id: issueId }, { timeoutMs: MYLAR_QUEUE_TIMEOUT_MS });
+    setMylarPartStatus(comicId, issueId, 'Wanted');
+    return { deferred: false };
+  } catch (error) {
+    if (error?.name !== 'TimeoutError') throw error;
+    // The request has been handed to Mylar even though its long-running search
+    // did not answer in time. Record that state so the UI does not leave a
+    // successful click spinning or invite a duplicate request.
+    setMylarPartStatus(comicId, issueId, 'Wanted');
+    return { deferred: true };
+  }
+}
+
 async function mylarParts(comicId, { refresh = false } = {}) {
   const local = getMylarParts(comicId);
   // The persisted list is the normal fast path. Mutating actions request a
@@ -579,12 +679,19 @@ function shelfKey(title = '') {
   return normalise(title).replace(/\b(?:19|20)\d\d\b/g, '').replace(/\s+/g, ' ').trim();
 }
 
+async function komgaSeries() {
+  return memo('komga:series-items', 60_000, async () => {
+    const page = await komga('series', { size: '500' });
+    return (page?.content ?? []).filter((series) => series?.id && series?.name);
+  });
+}
+
 async function komgaShelf() {
   return memo('komga:series', 60_000, async () => {
     try {
-      const page = await komga('series', { size: '500' });
+      const series = await komgaSeries();
       const map = new Map();
-      for (const s of page?.content ?? []) {
+      for (const s of series) {
         map.set(shelfKey(s.name), {
           id: String(s.id),
           books: s.booksCount ?? 0,
@@ -599,6 +706,53 @@ async function komgaShelf() {
     }
   });
 }
+
+function publicKomgaSeries(series) {
+  const id = String(series.id);
+  return {
+    id,
+    title: series.name,
+    books: series.booksCount ?? 0,
+    read: series.booksReadCount ?? 0,
+    unread: series.booksUnreadCount ?? 0,
+    inProgress: series.booksInProgressCount ?? 0,
+    cover: `/api/shelf/cover/${encodeURIComponent(id)}`,
+    readUrl: `${komgaPublicUrl}/series/${encodeURIComponent(id)}`,
+  };
+}
+
+// This is deliberately separate from /api/library. The latter is a Mylar
+// request workflow; this endpoint is the reader's complete Komga library,
+// including books imported outside Inkwell.
+app.get('/api/shelf', async (_req, res) => {
+  if (!komgaUrl || !komgaAuth) return res.json({ items: [], komga: false });
+  try {
+    const series = await komgaSeries();
+    res.json({ items: series.map(publicKomgaSeries), komga: true });
+  } catch (error) {
+    res.json({ items: [], komga: false, reason: error.message });
+  }
+});
+
+app.get('/api/shelf/cover/:id', async (req, res) => {
+  const id = String(req.params.id);
+  if (!/^[A-Za-z0-9_-]+$/.test(id) || !komgaUrl || !komgaAuth) return res.status(404).end();
+  try {
+    const response = await fetch(`${komgaUrl}/api/v1/series/${encodeURIComponent(id)}/thumbnail`, {
+      headers: { Authorization: komgaAuth, Accept: 'image/*' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return res.status(response.status === 404 ? 404 : 502).end();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 15 * 1024 * 1024) return res.status(502).end();
+    const mime = imageMimeType(bytes, response.headers.get('content-type') || '');
+    if (!mime) return res.status(502).end();
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.type(mime).send(bytes);
+  } catch {
+    res.status(502).end();
+  }
+});
 
 // "Do I already have this?" asked of a title rather than a watchlist entry.
 // Komga's names carry a trailing year that Mylar's do not, which shelfKey
@@ -659,13 +813,26 @@ const sameSecret = (given, expected) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 if (authUser && authPassword) {
+  const failedAuth = new Map();
   app.use((req, res, next) => {
     if (req.path === '/api/ready') return next();
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    const attempts = failedAuth.get(key) || [];
+    const recent = attempts.filter((at) => now - at < 5 * 60_000);
+    if (recent.length >= 8) {
+      res.set('Retry-After', String(Math.ceil((5 * 60_000 - (now - recent[0])) / 1000)));
+      return res.status(429).json({ error: 'Too many failed sign-in attempts. Try again later.' });
+    }
     const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
     if (scheme === 'Basic' && encoded) {
       const [user, ...rest] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
-      if (sameSecret(user, authUser) && sameSecret(rest.join(':'), authPassword)) return next();
+      if (sameSecret(user, authUser) && sameSecret(rest.join(':'), authPassword)) {
+        failedAuth.delete(key);
+        return next();
+      }
     }
+    failedAuth.set(key, [...recent, now]);
     res.set('WWW-Authenticate', 'Basic realm="Inkwell", charset="UTF-8"');
     res.status(401).json({ error: 'Inkwell needs a username and password.' });
   });
@@ -692,10 +859,63 @@ app.use((req, res, next) => {
   }
   next();
 });
+// Until a person has deliberately finished setup, do not let an accidentally
+// exposed fresh server make changes in Mylar or clear local state. Read-only
+// endpoints remain available so the setup screen and container diagnostics can
+// explain what is missing. This is not an account system: v1 is explicitly a
+// shared trusted-LAN or shared-Basic installation.
+app.use((req, res, next) => {
+  if (!WRITES.has(req.method) || req.path === '/api/setup/complete') return next();
+  if (setupStatus().completed) return next();
+  return res.status(428).json({
+    error: 'Finish Inkwell setup before making changes.',
+    code: 'setup_required',
+  });
+});
 // Container health must answer without reaching Mylar, Komga or Metron. Those
 // providers are intentionally diagnosed by /api/health, but a slow optional
 // metadata service must not make an otherwise healthy web server look dead.
-app.get('/api/ready', (_req, res) => res.json({ ok: true }));
+app.get('/api/ready', (_req, res) => {
+  if (shuttingDown) return res.status(503).json({ ok: false, reason: 'shutting down' });
+  return res.json({ ok: true, database: databaseLifecycle().schemaVersion });
+});
+app.get('/api/live', (_req, res) => res.json({ ok: !shuttingDown }));
+app.get('/api/setup', (_req, res) => res.json({ ...setupStatus(), database: databaseLifecycle().schemaVersion }));
+app.post('/api/setup/complete', (req, res) => {
+  const setup = setupStatus();
+  if (!setup.ready) {
+    return res.status(422).json({
+      error: 'Configure a valid Mylar API URL plus Mylar and ComicVine credentials before finishing setup.',
+      code: 'setup_incomplete',
+      setup,
+    });
+  }
+  if (setup.authentication === 'trusted-lan' && req.body?.acknowledgeTrustedLan !== true) {
+    return res.status(422).json({
+      error: 'Confirm that this unauthenticated installation is only reachable from a trusted LAN.',
+      code: 'trusted_lan_acknowledgement_required',
+    });
+  }
+  const installation = writeSetting('installation', {
+    completedAt: new Date().toISOString(),
+    access: setup.authentication,
+  });
+  console.log(`Inkwell setup completed using ${installation.access} access.`);
+  return res.status(201).json({ ok: true, setup: setupStatus() });
+});
+app.get('/api/setup/mylar-test', async (_req, res) => {
+  const setup = setupStatus();
+  if (!setup.requests.configured || !setup.requests.endpoint) {
+    return res.status(422).json({ ok: false, error: 'Configure a valid Mylar API URL and credential first.' });
+  }
+  const connected = await withinreason(
+    mylar('getIndex').then(() => true),
+    5_000,
+    false,
+  );
+  if (!connected) return res.status(503).json({ ok: false, error: 'Mylar did not answer. Check its URL, API key, and network access.' });
+  return res.json({ ok: true });
+});
 // A status page must never be slower than the thing it reports on. This route
 // used to call Metron live on every request: when that host is unreachable --
 // which it has been for days at a time -- the settings page sat on "Loading
@@ -740,6 +960,7 @@ app.get('/api/health', async (_req, res) => {
       cache: cacheStats(),
       enrichment: enrichmentStats(),
       metron: metronStatus(),
+      setup: setupStatus(),
     });
   }
   catch (error) { res.status(503).json({ ok: false, error: error.message }); }
@@ -877,9 +1098,10 @@ function wantedSince() {
 // worker ever picks the rest up, and every later request simply sits at Queued
 // behind it. From the outside that looks exactly like a request that was never
 // searched for. Inkwell could not tell the difference until now.
-const mylarWebUrl = (process.env.MYLAR_WEB_URL || mylarUrl).replace(/\/api\/?$/, '');
+const mylarWebUrl = httpUrl(process.env.MYLAR_WEB_URL || mylarUrl).replace(/\/api\/?$/, '');
 
 async function mylarWeb(pathname, params = {}) {
+  if (!mylarWebUrl) throw new Error('Mylar web URL is not configured.');
   const query = new URLSearchParams(params);
   const response = await fetch(`${mylarWebUrl}/${pathname}?${query}`, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Mylar returned HTTP ${response.status}`);
@@ -1098,7 +1320,8 @@ async function watchForEvents() {
   }
 }
 
-setInterval(() => { watchForEvents(); }, WATCH_INTERVAL_MS).unref();
+const eventWatchTimer = setInterval(() => { watchForEvents(); }, WATCH_INTERVAL_MS);
+eventWatchTimer.unref();
 // Not at boot: let the server start listening first, and give Mylar a moment
 // if both containers came up together.
 setTimeout(() => { watchForEvents(); }, 20_000).unref?.();
@@ -1414,8 +1637,14 @@ app.get('/api/thread/:kind/:id/lore', async (req, res, next) => {
 app.get('/api/thread/:kind/:id/volumes', async (req, res) => {
   const { kind, id } = req.params;
   if (!THREAD_KINDS[kind] || !/^\d+$/.test(id)) return res.status(400).json({ error: 'A valid saved thread is required.' });
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.max(12, Math.min(96, Number(req.query.size) || 48));
   const library = await watchlist().catch(() => []);
-  let volumes = relatedVolumes(kind, id, '', 48);
+  const relatedPage = relatedVolumePage(kind, id, {
+    limit: pageSize, offset: (page - 1) * pageSize,
+  });
+  let volumes = relatedPage.items;
+  let total = relatedPage.total;
   let source = 'stored-links';
   // ComicVine has no team-level credit graph at all -- a volume record lists
   // hundreds of characters and zero teams -- so a team's books can only be
@@ -1423,7 +1652,7 @@ app.get('/api/thread/:kind/:id/volumes', async (req, res) => {
   // page says so rather than dressing it up as one.
   if (kind === 'team') {
     const team = getObject('team', id);
-    let teamSeries = team?.name ? findVolumes(team.name, 120) : [];
+    let teamSeries = team?.name ? findVolumes(team.name, 500) : [];
     // A team page is an explicit request to learn that team's actual series.
     // One cached search is deliberately bounded; unlike a title detail crawl,
     // it does not fan out across a team's full history on every page view.
@@ -1444,16 +1673,23 @@ app.get('/api/thread/:kind/:id/volumes', async (req, res) => {
       })
       .sort((a, b) => relevance(b, team.name) - relevance(a, team.name)
         || notability(b) - notability(a))
-      .filter((item) => !seenSeries.has(String(item.id)) && seenSeries.add(String(item.id)))
-      .slice(0, 16);
+      .filter((item) => !seenSeries.has(String(item.id)) && seenSeries.add(String(item.id)));
+    // A team page is a deliberate deep browse, so it may show many distinct
+    // publication runs. Keep a transparent bound rather than silently making
+    // a long-lived team such as Fantastic Four look like it has 16 series.
+    const teamSeriesTotal = matchingSeries.length;
+    const maximumTeamSeries = 300;
+    const visibleTeamSeries = matchingSeries
+      .slice(0, maximumTeamSeries)
+      .slice((page - 1) * pageSize, page * pageSize);
 
     // A result-list response only has a title and cover. Queue a deliberately
     // small first page of team series for their richer detail documents, where
     // ComicVine finally supplies the actual character links. Those documents
     // are persisted by rememberVolumes, so later team/character pages become
     // SQLite reads rather than repeat provider calls.
-    if (matchingSeries.length) {
-      enqueueEnrichment('volume', matchingSeries.slice(0, 12).map((item) => item.id), 'team-series');
+    if (visibleTeamSeries.length) {
+      enqueueEnrichment('volume', visibleTeamSeries.slice(0, 12).map((item) => item.id), 'team-series');
       wakeEnrichment();
     }
 
@@ -1464,13 +1700,22 @@ app.get('/api/thread/:kind/:id/volumes', async (req, res) => {
     // a member is credited somewhere inside each. Both facts are true and only
     // one of them answers the question that was asked. A member's own books
     // belong on that member's page, which the roster above links to.
-    volumes = matchingSeries;
-    source = matchingSeries.length ? 'team-series' : 'none';
+    volumes = visibleTeamSeries;
+    source = visibleTeamSeries.length ? 'team-series' : 'none';
+    res.json({
+      items: volumes.map((item) => catalogueShape(item, new Set(library.map((x) => x.id)))),
+      source, observed: volumes.length, total: teamSeriesTotal,
+      page, pageSize, pages: Math.max(1, Math.ceil(Math.min(teamSeriesTotal, maximumTeamSeries) / pageSize)),
+      capped: teamSeriesTotal > maximumTeamSeries,
+      coverage: 'saved-title-matches',
+    });
+    return;
   }
   res.json({
     items: volumes.map((item) => catalogueShape(item, new Set(library.map((x) => x.id)))),
-    source,
-    observed: volumes.length,
+    source, observed: volumes.length, total,
+    page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), capped: false,
+    coverage: 'observed-credits',
   });
 });
 
@@ -1867,6 +2112,10 @@ app.get('/api/decade/:decade/volumes', async (req, res, next) => {
     res.json({
       decade, label: DECADE_NAMES[decade] ?? null, total,
       pages: Math.max(1, Math.ceil(total / size)), page,
+      source: 'local-catalogue',
+      // ComicVine has no reliable decade browse endpoint. This is every
+      // matching run Inkwell has saved, never a claim to its complete history.
+      coverage: 'observed-local-catalogue',
       items: items.map((item) => catalogueShape(item, owned)),
     });
   } catch (error) { next(error); }
@@ -2370,20 +2619,6 @@ const PUBLISHER_WEIGHT = {
 const weightOf = (name = '') =>
   Object.entries(PUBLISHER_WEIGHT).find(([p]) => name.startsWith(p))?.[1] ?? 0;
 
-const rails = [
-  { id: 'omnibus', title: 'Omnibuses', edition: 'Omnibus', majorsOnly: true,
-    queries: ['spider-man omnibus', 'batman omnibus', 'x-men omnibus'] },
-  { id: 'collections', title: 'Big collections', majorsOnly: true,
-    queries: ['compendium', 'epic collection', 'absolute edition'] },
-  { id: 'superheroes', title: 'Superhero essentials', majorsOnly: true,
-    queries: ['batman', 'x-men', 'avengers', 'superman'] },
-  { id: 'creator-owned', title: 'Creator-owned', hub: 'creator-owned',
-    queries: ['saga', 'hellboy', 'invincible', 'monstress', 'paper girls'], matchTitleStart: true,
-    publishers: ['Image', 'Dark Horse Comics', 'Boom! Studios', 'IDW Publishing'], strictVariety: true },
-  { id: 'manga', title: 'Manga collections',
-    queries: ['berserk', 'vagabond', 'one piece', 'fullmetal alchemist'], matchTitleStart: true, strictVariety: true },
-];
-
 // These are reader-first launch points, not an assertion that ComicVine has a
 // reliable global "most read" score (it does not). They use only volumes Inkwell
 // already knows, then their links become richer as a reader opens titles.
@@ -2486,64 +2721,115 @@ function curateRail(rail, tagged, cap = 18) {
   return selected.map(({ item }) => item);
 }
 
-async function railRows(rail) {
-  // Keep the query that found each row: for rails that are not about the big
-  // two, relevance to that query orders far better than publisher standing --
-  // weighting alone put Batman at the top of the manga rail.
-  const results = await gatherOrFail(
-    rail.queries.map(async (query) => {
-      const rows = await comicVine('search', { query, resources: 'volume', limit: '100' });
-      return rows.map((item) => ({ item, query }));
-    }),
-    `the ${rail.title} rail`);
-  return curateRail(rail, results);
+const DISCOVER_RAIL_BATCH = 8;
+
+function discoverySeed(req) {
+  const seed = String(req.query.seed || 'inkwell').trim();
+  return /^[a-zA-Z0-9_-]{1,96}$/.test(seed) ? seed : 'inkwell';
 }
 
-function localRailRows(rail, cap = 18) {
-  const tagged = rail.queries.flatMap((query) =>
-    findVolumes(query, 100).map((item) => ({ item, query })));
-  return curateRail(rail, tagged, cap);
+function discoveryIds(value, limit = 160) {
+  return [...new Set(String(value || '').split(',')
+    .map((id) => id.trim()).filter((id) => /^[a-zA-Z0-9:_-]{1,160}$/.test(id)))].slice(0, limit);
 }
 
-app.get('/api/discover', async (_req, res, next) => {
+async function discoveryState(req) {
+  // A missing Mylar must not turn a local metadata page into an error. It only
+  // removes the personal layer; general rails remain fully useful offline.
+  const library = await watchlist().catch(() => []);
+  // A tracked Mylar series is explicit reader intent, so it is eligible for
+  // the same gentle detail enrichment as a title they opened or requested in
+  // Inkwell. This is not a catalogue crawl: the queue is deduplicated and
+  // paced globally, and it lets real character/creator personalization emerge
+  // from saved ComicVine credits instead of title guesses.
+  if (library.length) {
+    enqueueEnrichment('volume', library.map((item) => item.id), 'library-discovery');
+    wakeEnrichment();
+  }
+  const catalogue = buildDiscoveryCatalogue(discoveryCatalogue());
+  const context = buildDiscoveryContext(catalogue, library);
+  const definitions = allRailDefinitions(catalogue, context);
+  return {
+    catalogue, context, definitions,
+    byId: new Map(definitions.map((definition) => [String(definition.id), definition])),
+    watchedIds: new Set(library.map((item) => String(item.id))),
+  };
+}
+
+function shapedDiscoveryRail(rail, watchedIds, { offset = 0, size = 18 } = {}) {
+  const items = rail.items.slice(offset, offset + size).map((item) => catalogueShape(item.raw, watchedIds));
+  return {
+    id: rail.id, title: rail.title, kicker: rail.kicker ?? null, subtitle: rail.subtitle ?? null,
+    source: rail.source, personal: Boolean(rail.personal), topics: rail.topics ?? [],
+    items, offset, total: rail.total,
+    hasMore: offset + items.length < Math.min(rail.total, DISCOVER_RAIL_CAP),
+    capped: offset + items.length >= DISCOVER_RAIL_CAP,
+  };
+}
+
+function resolveDiscoveryDefinition(state, id, seed, preview = DISCOVER_RAIL_CAP) {
+  const definition = state.byId.get(String(id));
+  if (!definition) return null;
+  return resolveRail(definition, state.catalogue, state.context, { preview, seed });
+}
+
+app.get('/api/discover', async (req, res, next) => {
   try {
-    const library = await watchlist(); const watchedIds = new Set(library.map((item) => item.id));
-    // Discover is a local reading room, not a silent provider crawler. Its
-    // shelves grow from titles a reader has deliberately explored elsewhere.
-    // A blank shelf gives a search launch point in the client, never a hidden
-    // request burst to ComicVine.
-    const sections = rails.map((rail) => {
-      const allItems = localRailRows(rail, DISCOVER_RAIL_CAP);
-      const items = allItems.slice(0, 18);
-      return {
-        id: rail.id, title: rail.title,
-        query: rail.queries[0], hub: rail.hub ?? null,
-        items: items.map((item) => catalogueShape(item, watchedIds)),
-        hasMore: allItems.length > items.length,
-        pending: false,
-        refreshing: false,
-      };
+    const state = await discoveryState(req);
+    const servedIds = discoveryIds(req.query.served);
+    const seed = discoverySeed(req);
+    const requestedBatch = Math.max(1, Math.min(10, Number(req.query.batch) || DISCOVER_RAIL_BATCH));
+    // Re-resolving the last few served definitions is local memory work. It
+    // gives the selector a real overlap signal without persisting a server-side
+    // session or trusting client-supplied title ids.
+    const recent = servedIds.slice(-3).flatMap((id) => {
+      const rail = resolveDiscoveryDefinition(state, id, seed, 14);
+      return rail ? [rail] : [];
     });
+    const selected = selectRails(state.definitions, state.catalogue, state.context, {
+      servedIds, batchSize: requestedBatch, seed, recent,
+    });
+    const sections = selected.map((rail) => shapedDiscoveryRail(rail, state.watchedIds));
     const mirror = cacheStats();
-    res.json({ sections, bootstrapping: mirror.volumes === 0 && mirror.enrichment.pending > 0 });
+    res.json({
+      sections, served: [...servedIds, ...selected.map((rail) => rail.id)],
+      exhausted: !sections.length,
+      bootstrapping: mirror.volumes === 0 && mirror.enrichment.pending > 0,
+      version: discoveryVersion,
+    });
   } catch (error) { next(error); }
 });
 
-// Rails deliberately page from SQLite only. Reaching the end feels like a
-// Netflix shelf, without turning a horizontal scroll into background provider
-// traffic. A hard cap keeps every rail bounded even as the local mirror grows.
+// Rail paging remains local and bounded. The definition is reconstructed from
+// the request-scoped context so a personal rail can never leak another
+// reader's library-derived criteria into this response.
 app.get('/api/discover/rail/:id', async (req, res, next) => {
-  const rail = rails.find((item) => item.id === req.params.id);
-  if (!rail) return res.status(404).json({ error: 'Unknown discovery shelf.' });
-  const offset = Math.max(0, Math.min(DISCOVER_RAIL_CAP - 12, Number(req.query.offset) || 0));
+  const offset = Math.max(0, Math.min(DISCOVER_RAIL_CAP - 6, Number(req.query.offset) || 0));
   const size = Math.max(6, Math.min(18, Number(req.query.size) || 12));
   try {
-    const [library, rows] = await Promise.all([watchlist(), Promise.resolve(localRailRows(rail, DISCOVER_RAIL_CAP))]);
-    const page = rows.slice(offset, offset + size);
+    const state = await discoveryState(req);
+    const rail = resolveDiscoveryDefinition(state, req.params.id, discoverySeed(req));
+    if (!rail) return res.status(404).json({ error: 'Unknown or unavailable discovery shelf.' });
+    res.json(shapedDiscoveryRail(rail, state.watchedIds, { offset, size }));
+  } catch (error) { next(error); }
+});
+
+// Explore is the full, paginated expression of exactly the same registered
+// definition as its Discover preview. It never accepts an arbitrary filter
+// expression from the browser.
+app.get('/api/discover/collection/:id', async (req, res, next) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const size = Math.max(12, Math.min(96, Number(req.query.size) || DEFAULT_PAGE_SIZE));
+  try {
+    const state = await discoveryState(req);
+    const rail = resolveDiscoveryDefinition(state, req.params.id, discoverySeed(req), Infinity);
+    if (!rail) return res.status(404).json({ error: 'Unknown or unavailable discovery collection.' });
+    const total = rail.items.length;
+    const offset = (page - 1) * size;
     res.json({
-      id: rail.id, offset, items: page.map((item) => catalogueShape(item, new Set(library.map((x) => x.id)))),
-      hasMore: offset + page.length < rows.length && offset + page.length < DISCOVER_RAIL_CAP,
-      capped: offset + page.length >= DISCOVER_RAIL_CAP,
+      id: rail.id, title: rail.title, kicker: rail.kicker ?? null, subtitle: rail.subtitle ?? null,
+      source: rail.source, personal: Boolean(rail.personal), page, pageSize: size, total, pages: Math.max(1, Math.ceil(total / size)),
+      items: rail.items.slice(offset, offset + size).map((item) => catalogueShape(item.raw, state.watchedIds)),
     });
   } catch (error) { next(error); }
 });
@@ -2619,26 +2905,41 @@ function requestId(req, res) {
 }
 
 // Mylar names an omnibus part "Volume 2" and nothing else. ComicVine usually
-// has the real title and a description, so the requests list can say what the
-// book actually is. Cached hard: this never changes for a published issue.
+// has the real title, description and individual cover. Cached hard: published
+// issue metadata does not change, and the v2 key deliberately refreshes older
+// title-only entries without making an installation migration necessary.
+async function volumeIssues(volumeId) {
+  return cached(`volume:${volumeId}:issues:v2`, 30 * 24 * 60 * 60_000, async () => {
+    const rows = await comicVine('issues', {
+      filter: `volume:${volumeId}`,
+      field_list: 'id,name,issue_number,description,image,resource_type',
+      sort: 'issue_number:asc',
+      limit: '100',
+    });
+    return rows.map((row) => ({
+      id: String(row.id),
+      number: row.issue_number == null ? null : String(row.issue_number),
+      name: row.name || null,
+      blurb: firstSentence(plainText(row.description || '')),
+      // Kept server-side so the cover proxy, not the browser, validates and
+      // fetches provider URLs.
+      coverSource: coverSourceFor(row),
+    }));
+  });
+}
+
+function publicIssue(issue, volumeId) {
+  return {
+    id: issue.id, number: issue.number, name: issue.name, blurb: issue.blurb,
+    cover: issue.coverSource ? `/api/volume/${encodeURIComponent(volumeId)}/issue/${encodeURIComponent(issue.id)}/cover` : null,
+  };
+}
+
 app.get('/api/volume/:id/issues', async (req, res, next) => {
   const id = String(req.params.id);
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Unknown volume.' });
   try {
-    const items = await cached(`volume:${id}:issues`, 30 * 24 * 60 * 60_000, async () => {
-      const rows = await comicVine('issues', {
-        filter: `volume:${id}`,
-        field_list: 'id,name,issue_number,description,resource_type',
-        sort: 'issue_number:asc',
-        limit: '100',
-      });
-      return rows.map((row) => ({
-        number: row.issue_number == null ? null : String(row.issue_number),
-        name: row.name || null,
-        blurb: firstSentence(plainText(row.description || '')),
-      }));
-    });
-    res.json({ items });
+    res.json({ items: (await volumeIssues(id)).map((issue) => publicIssue(issue, id)) });
   } catch (error) {
     // The list is an enhancement; never fail the requests page over it.
     res.json({ items: [], reason: error.message });
@@ -2709,9 +3010,10 @@ app.post('/api/request/:id/parts', async (req, res, next) => {
     // Mylar's queue command immediately hands each part to its search pipeline.
     // Keep this serial so selecting a whole omnibus line does not stampede the
     // indexers the same way an old ComicVine fan-out did.
+    let deferred = 0;
     for (const part of queueable) {
-      await mylar('queueIssue', { id: part.id });
-      setMylarPartStatus(id, part.id, 'Wanted');
+      const result = await queueMylarIssue(id, part.id);
+      if (result.deferred) deferred += 1;
     }
     enqueueEnrichment('volume', id, 'requested'); wakeEnrichment();
     cache.delete('watchlist');
@@ -2719,6 +3021,9 @@ app.post('/api/request/:id/parts', async (req, res, next) => {
       ok: true,
       queued: queueable.length,
       alreadyQueued: requested.length - queueable.length,
+      message: deferred
+        ? `${queueable.length} selected part${queueable.length === 1 ? '' : 's'} handed to Mylar. Its search may continue in the background.`
+        : null,
     });
   } catch (error) { next(error); }
 });
@@ -2737,9 +3042,8 @@ app.post('/api/request/:comicId/part/:issueId/retry', async (req, res, next) => 
   try {
     // queueIssue changes exactly this IssueID to Wanted and starts its search;
     // it does not re-add a whole series or touch neighbouring volumes.
-    await mylar('queueIssue', { id: issueId });
-    setMylarPartStatus(comicId, issueId, 'Wanted');
-    res.json({ ok: true, status: 'Wanted' });
+    const result = await queueMylarIssue(comicId, issueId);
+    res.json({ ok: true, status: 'Wanted', deferred: result.deferred });
   } catch (error) { next(error); }
 });
 
@@ -2777,17 +3081,16 @@ function imageMimeType(bytes, declared = '') {
   return '';
 }
 
-async function cachedCover(volumeId) {
-  const volume = getVolume(volumeId);
-  const sourceUrl = coverSourceFor(volume);
+async function cachedCover(coverId, sourceUrl) {
+  if (!/^(?:\d+|issue-\d+)$/.test(coverId)) throw new Error('The cover id is invalid.');
   if (!sourceUrl) throw new Error('No cover image is available for this title.');
-  const existing = getCover(volumeId);
-  const fileName = `${volumeId}.img`;
+  const existing = getCover(coverId);
+  const fileName = `${coverId}.img`;
   const destination = path.join(coverDir, fileName);
   if (existing?.sourceUrl === sourceUrl && existing.fileName === fileName && fs.existsSync(destination)) {
     return { path: destination, mimeType: existing.mimeType };
   }
-  if (coverInflight.has(volumeId)) return coverInflight.get(volumeId);
+  if (coverInflight.has(coverId)) return coverInflight.get(coverId);
   const task = (async () => {
     const url = new URL(sourceUrl);
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error('The cover URL is invalid.');
@@ -2804,10 +3107,10 @@ async function cachedCover(volumeId) {
     const temporary = path.join(coverDir, `.${fileName}.${process.pid}.tmp`);
     await fsp.writeFile(temporary, bytes);
     await fsp.rename(temporary, destination);
-    rememberCover(volumeId, { sourceUrl, fileName, mimeType, byteSize: bytes.length });
+    rememberCover(coverId, { sourceUrl, fileName, mimeType, byteSize: bytes.length });
     return { path: destination, mimeType };
-  })().finally(() => coverInflight.delete(volumeId));
-  coverInflight.set(volumeId, task);
+  })().finally(() => coverInflight.delete(coverId));
+  coverInflight.set(coverId, task);
   return task;
 }
 
@@ -2815,7 +3118,7 @@ app.get('/api/cover/:id', async (req, res, next) => {
   const { id } = req.params;
   if (!/^\d+$/.test(id)) return res.status(400).end();
   try {
-    const cover = await cachedCover(id);
+    const cover = await cachedCover(id, coverSourceFor(getVolume(id)));
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
     res.type(cover.mimeType);
     res.sendFile(cover.path);
@@ -2823,6 +3126,22 @@ app.get('/api/cover/:id', async (req, res, next) => {
     // A missing cover should fall back to Inkwell's title tile, not make the
     // card unusable. Keep the diagnostic in logs without leaking it into img.
     console.warn(`Cover ${id}: ${error.message}`);
+    res.status(404).end();
+  }
+});
+
+app.get('/api/volume/:volumeId/issue/:issueId/cover', async (req, res) => {
+  const { volumeId, issueId } = req.params;
+  if (!/^\d+$/.test(volumeId) || !/^\d+$/.test(issueId)) return res.status(400).end();
+  try {
+    const issue = (await volumeIssues(volumeId)).find((item) => item.id === issueId);
+    if (!issue?.coverSource) return res.status(404).end();
+    const cover = await cachedCover(`issue-${issueId}`, issue.coverSource);
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type(cover.mimeType);
+    res.sendFile(cover.path);
+  } catch (error) {
+    console.warn(`Issue cover ${volumeId}/${issueId}: ${error.message}`);
     res.status(404).end();
   }
 });
@@ -2872,4 +3191,27 @@ app.use((error, _req, res, _next) => {
   console.error(error);
   res.status(502).json({ error: error.message || 'The comic service could not complete that request.' });
 });
-app.listen(port, '0.0.0.0', () => console.log(`Comic Requester listening on :${port}`));
+const server = app.listen(port, '0.0.0.0', () => console.log(`Inkwell listening on :${port}`));
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; stopping Inkwell gracefully.`);
+  clearInterval(enrichmentTimer);
+  clearInterval(eventWatchTimer);
+
+  const forceExit = setTimeout(() => {
+    console.error('Graceful shutdown timed out; exiting with SQLite WAL recovery available on next start.');
+    process.exit(1);
+  }, 15_000);
+  forceExit.unref();
+
+  server.close(() => {
+    clearTimeout(forceExit);
+    closeStore();
+    process.exit(0);
+  });
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));

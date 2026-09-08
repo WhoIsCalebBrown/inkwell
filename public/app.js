@@ -10,6 +10,9 @@ const searchInput = document.querySelector('#search-input');
 
 const state = { shelf: [], filters: {}, results: [], editions: [], query: '' };
 let discoverBootstrapPoll;
+let discoverPagingCleanup = null;
+let discoverSession = null;
+let installationSetup = null;
 
 // Comics vocabulary is genuinely opaque from the outside, and the app is full of
 // it. Anything in here gets a dotted underline and explains itself on hover.
@@ -77,6 +80,9 @@ const SOURCES = {
   'search results': 'ComicVine’s search, re-ranked by Inkwell: an exact title wins, then all of your words, then a publisher or year you named. Your local catalogue answers first and is topped up from ComicVine.',
   'local catalogue': 'Everything Inkwell has kept from providers, on disk. It grows only from things you searched, opened, followed or requested — Inkwell never crawls.',
   'good places to start': 'Curated starting points, filled from books already in your catalogue. They are a way in, not a recommendation engine — Inkwell does not track what you read.',
+  'discovery metadata': 'A reusable collection matched from facts Inkwell has already saved locally: publisher, year, format, issue count, and recorded ComicVine characters or creators. It does not call a provider while you scroll.',
+  'editorial discovery': 'A deliberately limited starting collection. The matching rules are written by Inkwell so the shelf is useful before the local catalogue has enough richer metadata; it is labelled editorial rather than presented as a provider fact.',
+  'from your shelf': 'Built from the series you currently track in Mylar, while excluding those tracked series from the results. Publisher affinity works immediately; character and creator shelves appear only after their ComicVine records have been saved locally.',
   'request scope': 'What pressing Request will actually hand to Mylar, spelled out before you press it. Nothing is queued until you confirm a selection.',
   'created by': 'The writers and artists ComicVine lists on this book’s own record. Opening one shows every other book its record names them on.',
   featuring: 'The characters ComicVine lists on this book’s record. It describes the book as a whole, not each issue inside it — a name here does not mean they appear on every page.',
@@ -256,13 +262,24 @@ async function render() {
   const start = setting('start-page', 'discover');
   const path = (location.hash || `#/${start}`).slice(1);
   const [, name, ...rest] = path.split('/');
-  const route = routes[name] || routes.discover;
-  // Rail scroll listeners die with the elements when the view is replaced.
-  if (name !== 'discover') clearTimeout(discoverBootstrapPoll);
+  // Setup is server state, not a browser preference. This means opening the
+  // installation from another device cannot accidentally skip it, while an
+  // existing /config never sees setup again after a container replacement.
+  installationSetup = await api('/api/setup').catch(() => null);
+  const setupRequired = installationSetup && !installationSetup.completed;
+  const routeName = setupRequired ? 'setup' : name;
+  const route = routes[routeName] || routes.discover;
+  // Rail scroll listeners die with their elements, while vertical Discover
+  // paging listens on window and therefore needs an explicit teardown.
+  if (routeName !== 'discover') {
+    clearTimeout(discoverBootstrapPoll);
+    discoverPagingCleanup?.(); discoverPagingCleanup = null;
+  }
   document.querySelectorAll('[data-route]').forEach((b) => {
-    const active = b.dataset.route === name
-      || (name === 'thread' && b.dataset.route === 'threads')
-      || (['search', 'publisher', 'hub', 'decade'].includes(name) && b.dataset.route === 'browse');
+    const active = b.dataset.route === routeName
+      || (routeName === 'thread' && b.dataset.route === 'threads')
+      || (routeName === 'collection' && b.dataset.route === 'discover')
+      || (['search', 'publisher', 'hub', 'decade'].includes(routeName) && b.dataset.route === 'browse');
     b.setAttribute('aria-current', String(active));
   });
   window.scrollTo({ top: 0 });
@@ -274,7 +291,42 @@ async function render() {
   }
 }
 
+routes.setup = async () => {
+  const setup = installationSetup || await api('/api/setup');
+  const mylarConfigured = setup.requests?.configured && setup.requests?.endpoint;
+  const comicVineConfigured = setup.discovery?.configured;
+  const accessIsLan = setup.authentication === 'trusted-lan';
+  view.innerHTML = `
+    ${lede('setup', {
+      kicker: 'First-run setup',
+      title: 'Set up your<br /><em>reading room.</em>',
+      body: 'Inkwell keeps its own data in /config and connects to the services you already run. Mylar and ComicVine are required; Komga is optional.',
+    })}
+    <section class="settings-section">
+      <div class="section-head"><span class="kicker no">01</span><h2>Required connections</h2><span class="kicker aside">Configure these in your deployment, then restart Inkwell</span></div>
+      <div class="settings-grid request-settings">
+        <div class="setting"><span class="kicker">Mylar</span><b>${mylarConfigured ? 'Configured' : 'Needs attention'}</b><small>Set MYLAR_URL to Mylar’s address ending in /api. Mount Mylar appdata read-only so Inkwell can read its API and ComicVine credentials, or provide the two server-side credentials directly.</small>${mylarConfigured ? '<button class="secondary" data-test-mylar>Test Mylar connection</button>' : ''}<p class="status" data-mylar-test></p></div>
+        <div class="setting"><span class="kicker">ComicVine</span><b>${comicVineConfigured ? 'Configured' : 'Needs attention'}</b><small>Inkwell uses the ComicVine credential from Mylar’s config.ini, or COMICVINE_API_KEY if you use direct server-side credentials. It is never sent to the browser.</small></div>
+      </div>
+      ${mylarConfigured && comicVineConfigured ? '' : '<p class="settings-note">Open the Configuration guide for examples. Do not enter container paths, API keys, or Mylar database details in this browser.</p>'}
+    </section>
+    <section class="settings-section">
+      <div class="section-head"><span class="kicker no">02</span><h2>Access model</h2><span class="kicker aside">Inkwell v1 is one shared installation</span></div>
+      <div class="settings-grid request-settings">
+        <div class="setting"><span class="kicker">${accessIsLan ? 'Trusted LAN' : 'Shared Basic authentication'}</span><b>${accessIsLan ? 'Anyone who can reach this address can use Inkwell.' : 'A shared username and password protects this installation.'}</b><small>${accessIsLan ? 'This is appropriate only on a private LAN. For remote access, use a reverse proxy, Tailscale, or a tunnel with HTTPS and authentication.' : 'Inkwell has no public registration, user accounts, or roles. Everyone using these credentials has the same access.'}</small></div>
+      </div>
+      ${accessIsLan ? '<label class="setting toggle"><input type="checkbox" data-acknowledge-trusted-lan /><span><b>I understand this unauthenticated installation is limited to my trusted LAN.</b><small>I will use reverse-proxy or Tailscale authentication before exposing it remotely.</small></span></label>' : ''}
+    </section>
+    <section class="settings-section">
+      <div class="section-head"><span class="kicker no">03</span><h2>Finish</h2></div>
+      <div class="cache-card"><div><b>Ready when both required connections are configured.</b><p>Komga, Metron, notifications, and advanced Mylar settings can be added later from your deployment configuration. Completing setup does not modify Mylar or Komga.</p></div><button class="act" data-complete-setup${mylarConfigured && comicVineConfigured ? '' : ' disabled'}>Finish setup</button></div>
+    </section>`;
+};
+
 /* ---------------- shelf ---------------- */
+
+const normaliseText = (text) => String(text ?? '').toLowerCase().normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
 async function loadShelf() {
   const data = await api('/api/library');
@@ -414,8 +466,108 @@ const initialsOf = (name = '') => String(name).split(/\s+/).filter(Boolean)
 
 /* ---------------- discover ---------------- */
 
+const discoverSeed = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`)
+  .replace(/[^a-zA-Z0-9_-]/g, '');
+
+function saveDiscoverSession() {
+  try {
+    sessionStorage.setItem('inkwell:discover-session', JSON.stringify({
+      seed: discoverSession?.seed, served: discoverSession?.served || [],
+    }));
+  } catch { /* private mode is still a complete Discover experience */ }
+}
+
+function discoveryQuery(batch) {
+  const query = new URLSearchParams({ batch: String(batch), seed: discoverSession.seed });
+  if (discoverSession.served.length) query.set('served', discoverSession.served.join(','));
+  return `/api/discover?${query}`;
+}
+
+function discoverySection(section, number) {
+  const label = String(number).padStart(2, '0');
+  const context = [section.kicker, section.subtitle].filter(Boolean).join(' · ');
+  return `<section class="discover-rail-section" data-discovery-section="${esc(section.id)}">
+    <div class="section-head">
+      <span class="kicker no">${label}</span><h2>${esc(section.title)}</h2>
+      ${context ? `<span class="kicker aside">${esc(context)}</span>` : ''}
+      <button class="kicker discover-explore" data-collection="${esc(section.id)}">Explore →</button>
+    </div>
+    <div class="rail" data-discover-rail="${esc(section.id)}" data-discover-seed="${esc(discoverSession.seed)}"
+      data-next-offset="${section.items.length}" data-has-more="${section.hasMore}">
+      ${section.items.map(volumeCard).join('')}${section.hasMore ? '<span class="rail-sentinel" aria-hidden="true"></span>' : ''}
+    </div>
+  </section>`;
+}
+
+function appendDiscoverySections(sections) {
+  const rails = document.querySelector('#rails');
+  if (!rails || !sections.length) return;
+  const first = discoverSession.nextNumber;
+  rails.insertAdjacentHTML('beforeend', sections.map((section, index) => discoverySection(section, first + index)).join(''));
+  discoverSession.nextNumber += sections.length;
+  observeRailEnds();
+}
+
+function installDiscoverPaging() {
+  discoverPagingCleanup?.();
+  const check = () => {
+    if (!discoverSession || discoverSession.loading || discoverSession.exhausted || !document.querySelector('#rails')) return;
+    const remaining = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+    if (remaining > 900) return;
+    loadMoreDiscoveryRails();
+  };
+  let last = 0;
+  let trailing;
+  const onScroll = () => {
+    clearTimeout(trailing);
+    const since = Date.now() - last;
+    if (since >= 160) { last = Date.now(); check(); }
+    else trailing = setTimeout(() => { last = Date.now(); check(); }, 160 - since);
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', check, { passive: true });
+  discoverPagingCleanup = () => {
+    clearTimeout(trailing);
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', check);
+  };
+  setTimeout(check, 0);
+}
+
+async function loadMoreDiscoveryRails() {
+  if (!discoverSession || discoverSession.loading || discoverSession.exhausted) return;
+  const rails = document.querySelector('#rails');
+  if (!rails) return;
+  discoverSession.loading = true;
+  let loading = rails.querySelector('#discover-more-loading');
+  if (!loading) {
+    rails.insertAdjacentHTML('beforeend', '<div id="discover-more-loading" class="discover-more-loading"><span class="kicker">Finding another way in…</span></div>');
+    loading = rails.querySelector('#discover-more-loading');
+  }
+  try {
+    const page = await api(discoveryQuery(6));
+    discoverSession.served = page.served || discoverSession.served;
+    saveDiscoverSession();
+    loading?.remove();
+    if (page.sections?.length) appendDiscoverySections(page.sections);
+    if (page.exhausted || !page.sections?.length) {
+      discoverSession.exhausted = true;
+      rails.insertAdjacentHTML('beforeend', '<p class="discover-exhausted kicker">You have reached everything Inkwell can responsibly connect from this catalogue for now.</p>');
+    }
+  } catch {
+    loading?.remove();
+    // A later scroll retries; failing a decorative extension must not interrupt
+    // the reader who is already browsing a useful page.
+  } finally {
+    if (discoverSession) discoverSession.loading = false;
+  }
+}
+
 routes.discover = async () => {
   clearTimeout(discoverBootstrapPoll);
+  discoverPagingCleanup?.(); discoverPagingCleanup = null;
+  discoverSession = { seed: discoverSeed(), served: [], nextNumber: 3, loading: false, exhausted: false };
+  saveDiscoverSession();
   view.innerHTML = `${lede('discover', {
       kicker: 'Your shelf',
       title: 'Everything you follow,<br />in <em>one place</em>.',
@@ -426,14 +578,11 @@ routes.discover = async () => {
       ${skeletonRail(7)}
     </div>
     <div id="starter-paths">
-      <div class="section-head"><span class="kicker no">02</span><h2>Good places to start ${info('good places to start')}</h2>
+      <div class="section-head"><span class="kicker no">02</span><h2>Good places to start</h2>
         <span class="kicker aside">Built from your local catalogue</span></div>
       ${skeletonRail(5)}
     </div>
-    <div id="rails">
-      <div class="section-head"><span class="kicker no">02</span><h2>Omnibuses</h2></div>
-      ${skeletonRail(8)}
-    </div>`;
+    <div id="rails">${skeletonRail(8)}</div>`;
 
   const shelfSection = document.querySelector('#shelf-section');
   loadShelf().then(({ items, counts }) => {
@@ -445,22 +594,24 @@ routes.discover = async () => {
       </div>
       ${recent.length ? `<div class="rail">${recent.map((x) => `
         <article class="card">
-          ${coverHtml(x, { flag: x.inLibrary ? 'In library' : 'Requested' })}
+          <button class="cover-btn" data-volume="${esc(x.id)}" style="all:unset;cursor:pointer">
+            ${coverHtml(x, { flag: x.inLibrary ? 'In library' : 'Requested' })}
+          </button>
           <div class="meta"><h3>${esc(x.title)}</h3>
-          <span class="sub">${esc(x.state)}${x.books ? ` · ${plural(x.books, 'book')}` : ''}</span></div>
+          <span class="sub">${esc(x.state)}${x.books ? ` · ${plural(x.books, 'book')}` : ''}</span>
+          <button class="act" data-volume="${esc(x.id)}">Details →</button></div>
         </article>`).join('')}</div>`
         : '<div class="empty">Nothing requested yet.</div>'}`;
   }).catch((e) => { shelfSection.innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
 
   const starterPaths = document.querySelector('#starter-paths');
   api('/api/discover/paths').then(({ paths }) => {
-    starterPaths.innerHTML = `<div class="section-head"><span class="kicker no">02</span><h2>Good places to start ${info('good places to start')}</h2>
+    starterPaths.innerHTML = `<div class="section-head"><span class="kicker no">02</span><h2>Good places to start</h2>
       <span class="kicker aside">Grows from titles you have explored</span></div>
       <div class="path-grid">${paths.map((path, index) => {
         const art = path.items.filter((item) => item.cover).slice(0, 3);
         return `<article class="path-card path-card-${index % 5}">
-          ${stackedArt(art.map((item) => item.cover),
-            initialsOf(path.title))}
+          ${stackedArt(art.map((item) => item.cover), initialsOf(path.title))}
           <div class="path-copy"><span class="kicker" style="color:var(--accent)">Starter path</span><h3>${esc(path.title)}</h3>
             <p>${path.items.length ? `${path.items.length} saved titles to explore.` : 'Search this path to start teaching Inkwell about it.'}</p>
             <button class="secondary" ${path.hub ? `data-hub="${esc(path.hub)}"` : `data-search="${esc(path.search)}"`}>Explore →</button></div>
@@ -469,25 +620,25 @@ routes.discover = async () => {
   }).catch(() => { starterPaths.innerHTML = ''; });
 
   const rails = document.querySelector('#rails');
-  const renderRails = ({ sections, bootstrapping = false }) => {
-    rails.innerHTML = sections.map((section, i) => `
-      <div class="section-head">
-        <span class="kicker no">0${i + 2}</span><h2>${esc(section.title)}</h2>
-        ${section.items.length ? '<span class="kicker aside">From titles you’ve explored</span>' : ''}
-      </div>
-      ${section.items.length ? `<div class="rail" data-discover-rail="${esc(section.id)}" data-next-offset="${section.items.length}" data-has-more="${section.hasMore}">${section.items.map(volumeCard).join('')}${section.hasMore ? '<span class="rail-sentinel" aria-hidden="true"></span>' : ''}</div>`
-        : bootstrapping
-          ? '<div class="empty">Building your first local shelves…</div>'
-          : `<div class="empty">Not in your local catalogue yet. <button class="secondary" ${section.hub ? `data-hub="${esc(section.hub)}"` : `data-search="${esc(section.query)}"`}>Explore ${esc(section.title)} →</button></div>`}`).join('');
-    observeRailEnds();
-    if (bootstrapping) {
-      discoverBootstrapPoll = setTimeout(() => {
-        if (location.hash === '#/discover' || !location.hash) api('/api/discover').then(renderRails).catch(() => {});
-      }, 4_000);
+  try {
+    const page = await api(discoveryQuery(8));
+    discoverSession.served = page.served || [];
+    saveDiscoverSession();
+    rails.innerHTML = '';
+    appendDiscoverySections(page.sections || []);
+    if (!page.sections?.length) {
+      rails.innerHTML = page.bootstrapping
+        ? '<div class="empty">Building your first local shelves…</div>'
+        : '<div class="empty">Search for a book you know to begin growing Inkwell’s local discovery catalogue.</div>';
     }
-  };
-  api('/api/discover').then(renderRails)
-    .catch(() => { rails.innerHTML = '<div class="empty">ComicVine is not answering right now.</div>'; });
+    if (page.bootstrapping && !page.sections?.length) {
+      discoverBootstrapPoll = setTimeout(() => {
+        if (location.hash === '#/discover' || !location.hash) render();
+      }, 4_000);
+    } else installDiscoverPaging();
+  } catch {
+    rails.innerHTML = '<div class="empty">Inkwell could not load discovery right now.</div>';
+  }
 };
 
 // Rail paging is driven by scroll position, not IntersectionObserver.
@@ -557,7 +708,8 @@ async function extendRail(rail) {
   let added = 0;
   try {
     const page = await api(`/api/discover/rail/${encodeURIComponent(rail.dataset.discoverRail)}`
-      + `?offset=${encodeURIComponent(rail.dataset.nextOffset)}&size=12`);
+      + `?offset=${encodeURIComponent(rail.dataset.nextOffset)}&size=12`
+      + `&seed=${encodeURIComponent(rail.dataset.discoverSeed || 'inkwell')}`);
     added = page.items.length;
     const html = page.items.map(volumeCard).join('');
     if (sentinel) sentinel.insertAdjacentHTML('beforebegin', html);
@@ -606,6 +758,41 @@ routes.hub = async (id) => {
     ${applyContentFilter(hub.items).length
       ? `<div class="grid">${applyContentFilter(hub.items).map(volumeCard).join('')}</div>`
       : `<div class="empty">Inkwell has not learned any titles for this collection yet. Search for a book you already know, then this hub will grow naturally.</div>`}`;
+};
+
+// A discovery rail is a reusable collection definition, not a one-off preview.
+// Its full page therefore asks the server to resolve the same registered id,
+// rather than translating labels back into an approximate text search.
+routes.collection = async (encodedId, pageArg) => {
+  const id = decodeURIComponent(encodedId || '');
+  const page = Math.max(1, Number(pageArg) || 1);
+  const seed = discoverSession?.seed || 'inkwell';
+  view.innerHTML = `<section class="lede" style="border:0;padding-bottom:24px">
+      <span class="kicker" style="color:var(--accent)">Collection</span>
+      <h1>Loading this <em>collection.</em></h1></section>${skeletons(12)}`;
+  const data = await api(`/api/discover/collection/${encodeURIComponent(id)}?page=${page}&size=${pageSize()}&seed=${encodeURIComponent(seed)}`);
+  const shown = applyContentFilter(data.items);
+  const pager = (position) => `
+    <div class="pager ${position}">
+      ${page > 1 ? `<button class="kicker" data-collection-page="${page - 1}">← Previous</button>` : '<span></span>'}
+      <span class="kicker">Page ${page.toLocaleString()} of ${data.pages.toLocaleString()}
+        · ${data.total.toLocaleString()} titles</span>
+      ${page < data.pages ? `<button class="kicker" data-collection-page="${page + 1}">Next →</button>` : '<span></span>'}
+    </div>`;
+  view.innerHTML = `${breadcrumb([{ label: 'Discover', attr: 'data-route="discover"' }, { label: data.title }])}
+    <section class="lede" style="border:0;padding:22px 0 26px">
+      ${data.kicker ? `<span class="kicker" style="color:var(--accent)">${esc(data.kicker)}</span>` : ''}
+      <h1>${esc(data.title)}</h1>
+      ${data.subtitle ? `<p>${esc(data.subtitle)}</p>` : ''}
+    </section>
+    <div class="section-head"><span class="kicker no">01</span><h2>Explore the collection</h2>
+      <span class="kicker aside">${data.personal ? 'From your shelf' : data.source === 'metadata' ? 'From saved catalogue metadata' : 'Editorial collection'}
+        ${info(data.personal ? 'from your shelf' : data.source === 'metadata' ? 'discovery metadata' : 'editorial discovery')}</span></div>
+    ${filterBar(data.items.length, shown.length)}
+    ${pager('top')}
+    <div class="grid">${shown.map(volumeCard).join('')}</div>
+    ${pager('bottom')}`;
+  state.collection = { id, page };
 };
 
 /* ---------------- browse ---------------- */
@@ -949,6 +1136,7 @@ routes.decade = async (decadeArg, pageArg) => {
         <div class="stats" style="border-top:0;margin-top:18px;padding-top:0">
           <div><span class="kicker">Titles</span><b class="disp">${data.total.toLocaleString()}</b></div>
         </div>
+        <p class="sort-note kicker">Every matching publication run currently saved in Inkwell’s local catalogue. This grows as books are browsed; it is not presented as a complete history of every comic from the decade.</p>
       </div>
     </div>
     ${filterBar(data.items.length, shown.length)}
@@ -1182,7 +1370,7 @@ function renderResults() {
 
 /* ---------------- thread ---------------- */
 
-routes.thread = async (kind, id, encodedName) => {
+routes.thread = async (kind, id, encodedName, pageArg) => {
   view.innerHTML = `<div class="thread">
       <div class="skeleton portrait" style="aspect-ratio:3/4"></div>
       <div>
@@ -1194,11 +1382,12 @@ routes.thread = async (kind, id, encodedName) => {
       </div>
     </div>`;
   const fallbackName = encodedName ? decodeURIComponent(encodedName) : '';
+  const page = Math.max(1, Number(pageArg) || 1);
   const nameQuery = fallbackName ? `?name=${encodeURIComponent(fallbackName)}` : '';
   const [thread] = await Promise.all([api(`/api/thread/${kind}/${id}${nameQuery}`), loadShelf().catch(() => {})]);
   // Real navigational ancestry for the volume sheet -- not a guess at which
   // character "owns" a book, which would be inventing a relationship.
-  state.thread = { kind, id, name: thread.name, publisher: thread.publisher };
+  state.thread = { kind, id, name: thread.name, publisher: thread.publisher, page };
   const stat = (label, value) => value
     ? `<div><span class="kicker">${label}</span><b class="disp">${esc(value)}</b></div>` : '';
   // "Thread" is Inkwell's word for the tier, not the reader's. Say what this is.
@@ -1250,7 +1439,7 @@ routes.thread = async (kind, id, encodedName) => {
       ${memberRoster(thread.historicMembers)}` : ''}
     ${hasLore ? `<div id="thread-lore" data-lore-no="${loreNo}"></div>` : ''}
     <div class="section-head"><span class="kicker no">${connectedNo}</span>
-      <h2>Connected books ${info(kind === 'team' ? 'team books' : 'connected books')}</h2><span class="kicker aside">${kind === 'team'
+      <h2 id="thread-books-title">Connected books ${info(kind === 'team' ? 'team books' : 'connected books')}</h2><span class="kicker aside" id="thread-books-count">${kind === 'team'
         ? 'Series matched by name' : 'Books whose record names them'}</span></div>
     <div id="thread-books">${skeletons(12)}</div>`;
 
@@ -1267,8 +1456,8 @@ routes.thread = async (kind, id, encodedName) => {
 
   // Do not approximate a relationship with a title search. These are volumes
   // where the saved ComicVine detail actually credits this creator/character.
-  api(`/api/thread/${kind}/${id}/volumes`)
-    .then(({ items, source }) => {
+  api(`/api/thread/${kind}/${id}/volumes?page=${page}&size=${pageSize()}`)
+    .then(({ items, source, total = items.length, pages = 1, capped = false, coverage }) => {
       // Say where the shelf came from, in this thread's own terms. ComicVine
       // files no credits against a team, so a team's own books can only be
       // found by its name -- a different kind of claim from a saved credit,
@@ -1276,11 +1465,30 @@ routes.thread = async (kind, id, encodedName) => {
       // interleaving them here showed Essential X-Men to someone who had
       // opened Guardians of the Galaxy.
       const note = source === 'team-series'
-        ? `<p class="sort-note kicker">ComicVine keeps no record of which books a team is in — only which books each character is in — so these are series whose title matches ${esc(thread.name)}. Open a member above for the books their own record names them in.</p>`
-        : '';
+        ? `<p class="sort-note kicker">ComicVine keeps no record of which books a team is in. These are ${total.toLocaleString()} saved publication runs whose title matches ${esc(thread.name)}; the title repeats because each run is a different series or edition. Year, publisher and issue range below distinguish them.${capped ? ' Inkwell shows the first 300 saved matches.' : ''}</p>`
+        : coverage === 'observed-credits'
+          ? `<p class="sort-note kicker">${total.toLocaleString()} locally verified book records name this ${esc(kindLabel.toLowerCase())}. ComicVine does not provide a complete ${esc(kindLabel.toLowerCase())}-to-series catalogue, so this is an honest saved relationship view, not a claim that no other books exist. More records appear as Inkwell learns them. Substantial runs are shown first.</p>`
+          : '';
+      const pager = (position) => pages > 1 ? `<div class="pager ${position}">
+        ${page > 1 ? `<button class="kicker" data-thread-page="${page - 1}">← Previous</button>` : '<span></span>'}
+        <span class="kicker">Page ${page.toLocaleString()} of ${pages.toLocaleString()} · ${total.toLocaleString()} verified titles</span>
+        ${page < pages ? `<button class="kicker" data-thread-page="${page + 1}">Next →</button>` : '<span></span>'}
+      </div>` : '';
       const shown = applyContentFilter(items);
+      if (kind === 'team' && source === 'team-series') {
+        const title = document.querySelector('#thread-books-title');
+        const count = document.querySelector('#thread-books-count');
+        if (title) title.textContent = 'Publication runs';
+        if (count) count.textContent = `Page ${page.toLocaleString()} of ${pages.toLocaleString()} · ${total.toLocaleString()} saved matches`;
+      } else {
+        const count = document.querySelector('#thread-books-count');
+        if (count) count.textContent = `${total.toLocaleString()} locally verified titles`;
+      }
+      const cards = kind === 'team' && source === 'team-series'
+        ? shown.map((item) => volumeCard({ ...item, title: item.year ? `${item.title} (${item.year})` : item.title }))
+        : shown.map(volumeCard);
       document.querySelector('#thread-books').innerHTML = items.length
-        ? `${note}${filterBar(items.length, shown.length)}<div class="grid">${shown.map(volumeCard).join('')}</div>`
+        ? `${note}${filterBar(items.length, shown.length)}${pager('top')}<div class="grid">${cards.join('')}</div>${pager('bottom')}`
         : filterActive()
         ? `${filterBar(0, 0)}<div class="empty">No ${esc(contentFilter().format === 'all' ? 'matching' : contentFilter().format.toLowerCase())} books here. <button class="secondary" data-clear-filter>Clear filter</button></div>`
         : `<div class="empty">Inkwell has not saved any books under the name ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`;
@@ -1714,6 +1922,57 @@ routes.library = async () => {
   watchQueue(entries.map((entry) => entry.id).join(','));
 };
 
+function shelfLibraryCard(item) {
+  return `<article class="card shelf-library-card">
+    <a class="cover-btn" href="${esc(item.readUrl)}" target="_blank" rel="noreferrer" aria-label="Read ${esc(item.title)} in Komga">
+      ${coverHtml({ id: item.id, title: item.title, cover: item.cover })}
+    </a>
+    <div class="meta"><h3>${esc(item.title)}</h3>
+      <span class="sub">${plural(item.books, 'book')} · ${item.unread ? `${item.unread} unread` : 'All read'}</span>
+      <a class="secondary" href="${esc(item.readUrl)}" target="_blank" rel="noreferrer">Read in Komga ↗</a>
+    </div>
+  </article>`;
+}
+
+routes.shelf = async () => {
+  view.innerHTML = `${lede('shelf', {
+    kicker: 'My shelf',
+    title: 'Everything you can<br /><em>read now</em>.',
+    body: 'Your complete Komga library, including books imported outside Inkwell.',
+  })}${skeletons(1, '1fr')}`;
+  const data = await api('/api/shelf');
+  const items = data.items || [];
+  if (!data.komga) {
+    view.innerHTML = `${lede('shelf', { kicker: 'My shelf', title: 'Your reading room<br /><em>is not connected</em>.' })}
+      <div class="empty">Connect Komga in Inkwell’s configuration to see your complete library here.</div>`;
+    return;
+  }
+  const unread = items.reduce((total, item) => total + Number(item.unread || 0), 0);
+  view.innerHTML = `${lede('shelf', { kicker: 'My shelf', title: 'Everything you can<br /><em>read now</em>.' })}
+    <div class="stats" style="border-top:0;margin:0 0 26px;padding-top:0">
+      <div><span class="kicker">Series</span><b class="disp">${items.length}</b></div>
+      <div><span class="kicker">Books</span><b class="disp">${items.reduce((total, item) => total + Number(item.books || 0), 0)}</b></div>
+      <div><span class="kicker">Unread</span><b class="disp" style="color:var(--shelf)">${unread}</b></div>
+    </div>
+    <div class="shelf-toolbar"><input id="shelf-filter" type="search" placeholder="Search your shelf…" autocomplete="off" aria-label="Search your shelf" />
+      <span class="kicker" id="shelf-filter-count"></span></div>
+    <div class="grid" id="shelf-grid"></div>`;
+  const grid = document.querySelector('#shelf-grid');
+  const filter = document.querySelector('#shelf-filter');
+  const count = document.querySelector('#shelf-filter-count');
+  const paint = () => {
+    const query = normaliseText(filter.value);
+    const shown = query ? items.filter((item) => normaliseText(item.title).includes(query)) : items;
+    grid.innerHTML = shown.length ? shown.map(shelfLibraryCard).join('')
+      : '<div class="empty">Nothing on your shelf matches that search.</div>';
+    count.textContent = query ? `${shown.length} of ${items.length}` : `${items.length} series`;
+  };
+  filter.addEventListener('input', paint);
+  paint();
+  const shelfCount = document.querySelector('#shelf-count');
+  if (shelfCount) shelfCount.textContent = items.reduce((total, item) => total + Number(item.books || 0), 0);
+};
+
 /* ---------------- settings ---------------- */
 
 const healthState = (available, ready, missing) => available ? ready : missing;
@@ -1738,7 +1997,15 @@ function connectionsHtml(health) {
     : 'Checking…';
   const metronState = !health.metron?.available ? 'muted'
     : health.metron.reachable === false ? 'warn' : 'good';
+  const setup = health.setup;
+  const setupNotice = setup?.ready ? '' : `<div class="empty" style="grid-column:1/-1;margin:0">
+    <b>Inkwell is running, but setup needs attention.</b><br />
+    ${setup?.discovery?.configured ? '' : 'Discovery is waiting for a ComicVine credential. '}
+    ${setup?.requests?.configured ? '' : 'Requests are waiting for a Mylar API credential. '}
+    Mount readable Mylar appdata or provide the corresponding server-side setting, then restart Inkwell. Komga remains optional.
+  </div>`;
   return `
+    ${setupNotice}
     <article class="connection"><span class="kicker">Catalogue</span><b>ComicVine</b><p class="status ${health.comicvine?.limited ? 'warn' : 'good'}">${esc(rate)}</p><small>Metadata, covers, people and series discovery.</small></article>
     <article class="connection"><span class="kicker">Requests</span><b>Mylar</b><p class="status ${health.mylar ? 'good' : 'warn'}">${health.mylar ? 'Connected' : 'Not answering'}</p><small>Watchlist and background searching.</small></article>
     <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>
@@ -1890,7 +2157,7 @@ async function openVolume(id) {
             item.owned.books ? ` — ${plural(item.owned.books, 'book')}${item.owned.unread ? `, ${item.owned.unread} unread` : ''}` : ''}.</p>` : ''}
           <p class="action-scope">${info('request scope')} <b>Request</b> ${esc(requestScope)}${isCollection ? ''
             : ' <b>Follow this series</b> adds it to Mylar’s watchlist and keeps taking every future issue.'}</p>
-          ${canChooseParts ? `<div id="collection-request" class="collection-request" data-part-noun="${partNoun}" data-collection="${isCollection}"></div>` : ''}
+          ${canChooseParts ? `<div id="collection-request" class="collection-request" data-part-noun="${partNoun}" data-preselect-parts="${isCollection}"></div>` : ''}
         </div>
       </div>
       ${relatedSection(item.related?.creators, 'Books that name these creators')}
@@ -1933,7 +2200,7 @@ function renderPartPicker(id, options) {
   // A single-issue series is the opposite -- picking issues is inherently
   // selective, and "I want all of it" is what Follow this series means. Either
   // way the head copy says which it is, so the default is never a surprise.
-  const preselect = slot.dataset.collection === 'true';
+  const preselect = slot.dataset.preselectParts === 'true';
   // Two things worth knowing before choosing, neither of them a refusal: a
   // second copy is occasionally the point, and Inkwell does not get to decide.
   const owned = options.owned ? `<p class="picker-note owned">Already on your shelf in Komga${
@@ -1949,7 +2216,8 @@ function renderPartPicker(id, options) {
         : `Pick the ${esc(noun)}s you want. To take every future one instead, use <b>Follow this series</b>.`}</p></div>
     <div class="part-list">${parts.map((part) => `<label class="part-row ${part.requestable ? '' : 'done'}">
       <input type="checkbox" data-part-number="${esc(part.number)}" ${part.requestable ? (preselect ? 'checked' : '') : 'disabled'} />
-      <span><b>${esc(partName(part, noun))}</b><small>${esc(part.status === 'Skipped' ? 'Not requested yet' : part.status)}</small></span>
+      <span class="part-cover" data-part-cover="${esc(part.number)}" hidden></span>
+      <span class="part-copy"><b data-part-picker-title="${esc(part.number)}">${esc(partName(part, noun))}</b><small>${esc(part.status === 'Skipped' ? 'Not requested yet' : part.status)}</small></span>
     </label>`).join('')}</div>
     <div class="actions">
       <button class="primary" data-request-parts="${esc(id)}">Request selected</button>
@@ -1959,6 +2227,33 @@ function renderPartPicker(id, options) {
     </div>
   </section>`;
   refreshPartSelection();
+}
+
+// Covers are decoration around an already-usable Mylar picker. Fetch them after
+// paint, and leave the title-only rows alone whenever ComicVine is unavailable.
+async function hydratePartPicker(volumeId) {
+  let items;
+  try { ({ items } = await api(`/api/volume/${encodeURIComponent(volumeId)}/issues`)); }
+  catch { return; }
+  const picker = document.querySelector('#collection-request');
+  if (!picker || !items?.length) return;
+  const noun = picker.dataset.partNoun || 'part';
+  const byNumber = new Map(items.map((item) => [String(item.number), item]));
+  for (const input of picker.querySelectorAll('[data-part-number]')) {
+    const issue = byNumber.get(input.dataset.partNumber);
+    if (!issue) continue;
+    const row = input.closest('.part-row');
+    const title = row?.querySelector(`[data-part-picker-title="${CSS.escape(input.dataset.partNumber)}"]`);
+    if (title && issue.name && !/^(?:volume|part|issue)\s*\d+$/i.test(issue.name)) {
+      title.textContent = partName({ number: input.dataset.partNumber, name: issue.name }, noun);
+    }
+    const cover = row?.querySelector(`[data-part-cover="${CSS.escape(input.dataset.partNumber)}"]`);
+    if (cover && issue.cover) {
+      cover.innerHTML = `<img src="${esc(issue.cover)}" alt="Cover for ${esc(partName({ number: issue.number, name: issue.name }, noun))}" loading="lazy" />`;
+      cover.hidden = false;
+      row.classList.add('has-cover');
+    }
+  }
 }
 
 async function openPartPicker(id, button) {
@@ -1978,6 +2273,7 @@ async function openPartPicker(id, button) {
       }));
     }
     renderPartPicker(id, options);
+    hydratePartPicker(id);
   } catch (error) {
     button.disabled = false;
     slot.innerHTML = `<p class="kicker" style="color:var(--accent)">${esc(error.message)}</p>`;
@@ -2012,9 +2308,9 @@ async function queueSelectedParts(id, button) {
       return;
     }
     button.textContent = result.queued ? `Requested ${result.queued}` : 'Already requested';
-    toast(result.queued
+    toast(result.message || (result.queued
       ? `${result.queued} selected volume${result.queued === 1 ? '' : 's'} added to Mylar.`
-      : 'Those selected volumes were already being handled by Mylar.');
+      : 'Those selected volumes were already being handled by Mylar.'));
     loadShelf().catch(() => {});
   } catch (error) {
     button.disabled = false;
@@ -2084,6 +2380,47 @@ async function retryPart(comicId, issueId, button) {
 /* ---------------- events ---------------- */
 
 document.addEventListener('click', async (event) => {
+  const testMylar = event.target.closest('[data-test-mylar]');
+  if (testMylar && !testMylar.disabled) {
+    const result = document.querySelector('[data-mylar-test]');
+    testMylar.disabled = true;
+    testMylar.textContent = 'Testing…';
+    try {
+      await api('/api/setup/mylar-test');
+      if (result) { result.textContent = 'Mylar answered successfully.'; result.className = 'status good'; }
+    } catch (error) {
+      if (result) { result.textContent = error.message; result.className = 'status warn'; }
+    } finally {
+      testMylar.disabled = false;
+      testMylar.textContent = 'Test Mylar connection';
+    }
+    return;
+  }
+  const completeSetup = event.target.closest('[data-complete-setup]');
+  if (completeSetup && !completeSetup.disabled) {
+    const acknowledge = document.querySelector('[data-acknowledge-trusted-lan]');
+    if (acknowledge && !acknowledge.checked) {
+      toast('Confirm the trusted-LAN access model before finishing setup.', 'error');
+      return;
+    }
+    completeSetup.disabled = true;
+    completeSetup.textContent = 'Finishing…';
+    try {
+      await api('/api/setup/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledgeTrustedLan: Boolean(acknowledge?.checked) }),
+      });
+      installationSetup = null;
+      go('/discover');
+      toast('Inkwell is ready.');
+    } catch (error) {
+      completeSetup.disabled = false;
+      completeSetup.textContent = 'Finish setup';
+      toast(error.message, 'error');
+    }
+    return;
+  }
   const unfurlRoster = event.target.closest('[data-unfurl-roster]');
   if (unfurlRoster) {
     const roster = unfurlRoster.closest('.member-roster');
@@ -2138,6 +2475,8 @@ document.addEventListener('click', async (event) => {
     const name = thread.dataset.threadName;
     return go(`/thread/${thread.dataset.thread}${name ? `/${encodeURIComponent(name)}` : ''}`);
   }
+  const collection = event.target.closest('[data-collection]');
+  if (collection) return go(`/collection/${encodeURIComponent(collection.dataset.collection)}`);
   const hub = event.target.closest('[data-hub]');
   if (hub) return go(`/hub/${encodeURIComponent(hub.dataset.hub)}`);
   const search = event.target.closest('[data-search]');
@@ -2151,6 +2490,13 @@ document.addEventListener('click', async (event) => {
   if (era) return go(`/decade/${encodeURIComponent(era.dataset.decade)}`);
   const eraPage = event.target.closest('[data-decade-page]');
   if (eraPage && state.decade) return go(`/decade/${state.decade.decade}/${eraPage.dataset.decadePage}`);
+  const threadPage = event.target.closest('[data-thread-page]');
+  if (threadPage && state.thread) {
+    const name = state.thread.name ? `/${encodeURIComponent(state.thread.name)}` : '';
+    return go(`/thread/${state.thread.kind}/${state.thread.id}${name}/${threadPage.dataset.threadPage}`);
+  }
+  const collectionPage = event.target.closest('[data-collection-page]');
+  if (collectionPage && state.collection) return go(`/collection/${encodeURIComponent(state.collection.id)}/${collectionPage.dataset.collectionPage}`);
   const fmt = event.target.closest('[data-format]');
   if (fmt) {
     state.pendingFilters = { format: fmt.dataset.format };
