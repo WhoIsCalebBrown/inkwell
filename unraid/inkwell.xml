@@ -13,7 +13,9 @@
   <Support>https://github.com/WhoIsCalebBrown/inkwell/issues</Support>
   <Project>https://github.com/WhoIsCalebBrown/inkwell</Project>
   <ReadMe>https://github.com/WhoIsCalebBrown/inkwell/blob/main/docs/self-hosting.md</ReadMe>
-  <Icon>https://raw.githubusercontent.com/WhoIsCalebBrown/inkwell/main/public/inkwell-favicon.png</Icon>
+  <!-- 256 square, which is what Community Applications asks for. The favicon
+       is 1254px and half a megabyte; Unraid draws this at about 48. -->
+  <Icon>https://raw.githubusercontent.com/WhoIsCalebBrown/inkwell/main/public/inkwell-unraid.png</Icon>
   <Overview>
     Inkwell is a single-user comic request front end for Mylar. It stores all
     of its own state under /config, reads Mylar appdata read-only, and does not
