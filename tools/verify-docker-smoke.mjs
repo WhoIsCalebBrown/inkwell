@@ -18,8 +18,15 @@ const nextImage = `inkwell-smoke-next:${suffix}`;
 const uid = '12345';
 const gid = '12346';
 const volume = `inkwell-smoke-config-${suffix}`;
-const bindDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkwell-bind-smoke-'));
-const restoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkwell-restore-smoke-'));
+// One scratch root the test user owns, holding two directories the container
+// will take ownership of. Keeping them together is what lets the cleanup below
+// remove them again: after the entrypoint chowns /config to PUID, the user who
+// started the test no longer owns -- or can even list -- the bind mount.
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'inkwell-smoke-'));
+const bindDir = path.join(scratch, 'config');
+const restoreDir = path.join(scratch, 'restore');
+fs.mkdirSync(bindDir);
+fs.mkdirSync(restoreDir);
 const placeholderMylar = path.join(root, 'config', 'mylar-placeholder');
 const placeholderKomf = path.join(root, 'config', 'komf-placeholder.yml');
 const containers = [];
@@ -28,6 +35,19 @@ function docker(args, options = {}) {
   const result = spawnSync('docker', args, { cwd: root, encoding: 'utf8', ...options });
   if (result.status !== 0) throw new Error(`docker ${args.join(' ')}\n${result.stdout}${result.stderr}`);
   return result.stdout.trim();
+}
+
+// /config is deliberately owned by a UID this process does not have, so every
+// host-side look at its contents goes through a root container instead. That is
+// also how an operator backs up appdata, and it is the only way this test runs
+// as an ordinary user -- GitHub's runner is not root, and reading the bind
+// mount directly aborts the process inside Node's C++ copy implementation.
+function asRoot(script, ...mounts) {
+  return docker([
+    'run', '--rm', '--entrypoint', 'sh',
+    ...mounts.flatMap((mount) => ['-v', mount]),
+    image, '-c', script,
+  ]);
 }
 
 function dockerAvailable() {
@@ -104,10 +124,10 @@ async function verifyPersistentMount(label, mount) {
   // against the bind layout used by Unraid/NAS, including SQLite's companion
   // WAL/SHM files if a platform leaves them behind after a clean stop.
   if (label === 'bind') {
-    fs.cpSync(bindDir, restoreDir, { recursive: true, force: true });
-    fs.rmSync(bindDir, { recursive: true, force: true });
-    fs.mkdirSync(bindDir, { recursive: true });
-    fs.cpSync(restoreDir, bindDir, { recursive: true, force: true });
+    const mounts = [`${bindDir}:/config`, `${restoreDir}:/restore`];
+    asRoot('cp -a /config/. /restore/', ...mounts);
+    asRoot('find /config -mindepth 1 -delete', ...mounts);
+    asRoot('cp -a /restore/. /config/', ...mounts);
   }
 
   const second = `inkwell-smoke-${label}-second-${suffix}`;
@@ -145,17 +165,21 @@ try {
   await verifyPersistentMount('volume', volume);
   await verifyPersistentMount('bind', bindDir);
   await verifyImageReplacement(bindDir);
-  assert.ok(fs.existsSync(path.join(bindDir, 'cache.db')), 'bind mount did not receive SQLite database');
-  const owner = fs.statSync(path.join(bindDir, 'cache.db'));
-  assert.equal(String(owner.uid), uid, 'bind-mounted SQLite database has the wrong UID');
-  assert.equal(String(owner.gid), gid, 'bind-mounted SQLite database has the wrong GID');
+  const database = asRoot('test -f /config/cache.db && stat -c "%u %g" /config/cache.db || echo missing', `${bindDir}:/config`);
+  assert.notEqual(database, 'missing', 'bind mount did not receive SQLite database');
+  assert.equal(database, `${uid} ${gid}`, 'bind-mounted SQLite database has the wrong owner');
   console.log('Docker clean-install, persistence, non-root, bind-mount backup/restore, image replacement, volume, and bind-mount smoke tests passed.');
 } finally {
   for (const name of containers) {
     spawnSync('docker', ['rm', '-f', name], { encoding: 'utf8' });
   }
   spawnSync('docker', ['volume', 'rm', '-f', volume], { encoding: 'utf8' });
+  // Root owns what is left under the scratch root, so root has to remove it.
+  // This has to happen before the image it borrows is deleted.
+  spawnSync('docker', [
+    'run', '--rm', '--entrypoint', 'sh', '-v', `${scratch}:/scratch`, image,
+    '-c', 'rm -rf /scratch/config /scratch/restore',
+  ], { encoding: 'utf8' });
   spawnSync('docker', ['image', 'rm', '-f', image, nextImage], { encoding: 'utf8' });
-  fs.rmSync(bindDir, { recursive: true, force: true });
-  fs.rmSync(restoreDir, { recursive: true, force: true });
+  fs.rmSync(scratch, { recursive: true, force: true });
 }
