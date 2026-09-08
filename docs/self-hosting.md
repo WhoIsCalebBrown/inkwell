@@ -43,7 +43,7 @@ MYLAR_URL=http://mylar:8090/api
 
 `MYLAR_DIR` is Mylar **appdata**, containing `config.ini` and `mylar.db`, not a comics directory. It is mounted read-only. Inkwell reads Mylar and ComicVine credentials from `config.ini` and never sends them to the browser. If appdata cannot be mounted, use advanced server-side `MYLAR_API_KEY` and `COMICVINE_API_KEY` values instead.
 
-For Mylar in another Docker project, `mylar` must resolve from Inkwell (for example via a shared external network). For a LAN-hosted Mylar, use its LAN address such as `http://192.168.40.20:8090/api`. Do not use `127.0.0.1` unless Mylar shares Inkwell's network namespace.
+For Mylar in another Docker project, `mylar` must resolve from Inkwell (for example via a shared external network). For a LAN-hosted Mylar, use its LAN address such as `http://192.168.1.10:8090/api`. Do not use `127.0.0.1` unless Mylar shares Inkwell's network namespace.
 
 After changing deployment configuration, run `docker compose up -d`. Setup can test the Mylar API. A temporarily unreachable Mylar, Komga, Metron, or metadata provider does not stop Inkwell from serving setup or locally saved data.
 
