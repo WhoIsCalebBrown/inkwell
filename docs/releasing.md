@@ -53,11 +53,27 @@ support question can be pinned to.
 Three things have to be public before a stranger — or an Unraid server — can
 follow this path. None of them happen automatically.
 
-1. **The GHCR package.** GHCR creates a new package as **private**. Unraid
-   checks for updates anonymously, so a private package means it can never see
-   a new digest and never offers Update. After the first successful release,
-   open the package page (Repository → Packages → inkwell → Package settings)
-   and set its visibility to **public**.
+1. **The GHCR package.** A package takes its visibility from the repository
+   **at the moment it is first created**, and nothing later changes it: not
+   making the repository public, and not any REST endpoint — there is no API
+   for package visibility at all. If the package was first published while the
+   repository was private, it stays private, and the settings page may not
+   offer a way to change it.
+
+   The reliable fix is to delete the package and let the next release recreate
+   it while the repository is public:
+
+   ```sh
+   gh auth refresh -h github.com -s read:packages,delete:packages
+   gh api "/user/packages/container/inkwell" --jq .visibility   # confirm
+   gh api -X DELETE "/user/packages/container/inkwell"
+   gh run rerun <the release run>                               # republishes
+   gh api "/user/packages/container/inkwell" --jq .visibility   # now public
+   ```
+
+   Deleted packages are restorable for 30 days, and re-running a release
+   rebuilds the same tags — but the image digest changes, so fix the release
+   notes afterwards. This is how `1.0.0` came to be published twice.
 2. **The repository.** The Unraid template's `Icon` and `TemplateURL` are
    `raw.githubusercontent.com` links, which 404 while the repository is
    private, and the install instructions fetch the template from the same
@@ -68,11 +84,36 @@ follow this path. None of them happen automatically.
 3. **Actions.** Enabled by default; nothing to configure. The release
    authenticates with `GITHUB_TOKEN` and needs no secret.
 
-Confirm the result from a machine that is not logged in:
+Confirm the result the way Unraid does — anonymously, from a machine that is
+not logged in. A public package hands out a pull token to anybody; a private one
+answers `UNAUTHORIZED`, and that is the exact point where Unraid gives up and
+never offers Update:
 
 ```sh
+curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:whoiscalebbrown/inkwell:pull"
 docker pull ghcr.io/whoiscalebbrown/inkwell:latest
 ```
+
+Note that an unauthenticated `HEAD` on the manifest returns `401` even for a
+public image — the registry always wants a token first — so a bare `401` proves
+nothing either way. Ask for the token.
+
+### If you would rather keep it private
+
+Unraid handles an authenticated registry properly: `getRegistryAuth()` reads
+`/root/.docker/config.json`, `pullImage()` sends it as `X-Registry-Auth`, and
+`getRemoteVersionV2()` passes it when fetching the bearer token. So a private
+package works, with two caveats worth knowing:
+
+```sh
+echo "$PAT" | docker login ghcr.io -u <user> --password-stdin   # needs read:packages
+```
+
+- The token must carry **`read:packages`**. Without it GHCR still issues a
+  token and then answers `403` on the manifest, which looks like a working
+  login and behaves like a broken one.
+- Unraid's `/` is a RAM disk, so `/root/.docker/config.json` is gone on reboot
+  and update checks go quiet with no error. Persist it from `/boot/config/go`.
 
 ## Verifying a published release
 

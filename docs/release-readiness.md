@@ -219,13 +219,24 @@ copy implementation — uncatchable, and it would have masked every later failur
 The harness now performs the backup, restore, ownership check and cleanup in a
 throwaway root container.
 
-**The remaining gate is visibility, and it is one setting, not a code change.**
-Reproducing Unraid's check against the published tag today returns
-`HTTP/2 401` with no anonymous token, which is exactly the path where
-`getRemoteVersionV2()` returns null and Unraid records status `undef` — no
-Update is ever offered. Making the GHCR package public fixes that; making the
-repository public additionally fixes the template's `Icon` and `TemplateURL`
-raw links and re-enables the attestation.
+**Resolved: the full path is now proven anonymously.** `v1.0.0` is published
+(`latest`, `1`, `1.0`, `1.0.0`), the repository is public, and the GHCR package
+is public. Unraid's own code, run on the Unraid host with no credentials
+configured, reports `local == remote` for
+`sha256:0999df7f…` — the comparison that drives the Update button.
+
+Getting there found a GHCR behavior worth recording: **a package takes its
+visibility from the repository at creation and never changes it.** The package
+was first published while this repository was private, so it stayed private
+after the repository went public, no REST endpoint exists to change it, and the
+settings UI did not offer one. Deleting the package and re-running the release
+recreated it as public. `docs/releasing.md` carries the procedure.
+
+Two related traps, both cost time here and are now documented: an
+unauthenticated `HEAD` on a manifest returns `401` even for a public image, so
+it proves nothing about visibility — ask the token endpoint instead; and a
+credential lacking `read:packages` is issued a registry token and then refused
+with `403`, which looks like a working login and behaves like a broken one.
 
 #### SELFHOST-001
 
