@@ -83,6 +83,11 @@ npm run verify:http    # the HTTP contract, no provider calls
 npm run verify:cache   # every saved relationship, re-derived from its source
 ```
 
+`npm run dev` reads the same `.env` as the container, so a workstation can talk
+to a Mylar and a Komga running elsewhere on the network. Set `MYLAR_CONFIG` to
+a config.ini it can read, or hand it `MYLAR_API_KEY` and `COMICVINE_API_KEY`
+directly for a session.
+
 The browser gets ES modules straight off disk; `public/index.html` versions the
 two assets with `?v=`, so bump both when you change them. `CLAUDE.md` is the
 working notes: the model everything is built on, the invariants that have been
