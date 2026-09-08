@@ -1,61 +1,73 @@
+# Copy .env.example to .env, set the two or three values for your machine, then
+#   docker compose up -d --build
+# Nothing here is specific to the machine Inkwell was written on: every address
+# and path is an environment variable with a single-host default.
 services:
   inkwell:
     build: .
     container_name: inkwell
     restart: unless-stopped
     labels:
-      # Lets Unraid's Docker page expose an Open WebUI action for this
-      # Compose-managed container. Using its placeholder avoids DNS reliance.
+      # Optional, and only meaningful on Unraid: it adds an Open WebUI action
+      # to the Docker page for a Compose-managed container.
       net.unraid.docker.webui: http://[IP]:[PORT:3013]
     read_only: true
     security_opt:
       - no-new-privileges:true
     environment:
-      MYLAR_URL: http://192.168.40.44:8090/api
+      # Mylar's API, including the trailing /api.
+      MYLAR_URL: ${MYLAR_URL:-http://127.0.0.1:8090/api}
+      # Read from the directory mounted below: config.ini holds both API keys,
+      # mylar.db holds the search and download state no API exposes.
       MYLAR_CONFIG: /run/mylar/config.ini
+      MYLAR_DB: /run/mylar/mylar.db
       # Komga is the only system that knows what actually landed on disk; Mylar
       # reports every watched series as 'Active' whether or not it downloaded.
-      KOMGA_URL: http://192.168.40.44:25600
+      # Optional: without it every title reads as "searching".
+      KOMGA_URL: ${KOMGA_URL:-}
       KOMGA_CONFIG: /run/komf/application.yml
-      # Keep these in the app's protected .env. The mounted Komf config can be
-      # root-only, while this container intentionally runs as an unprivileged
-      # user and must not weaken those file permissions.
+      # Set these only if you are not mounting a Komf config below.
       KOMGA_USER: ${KOMGA_USER:-}
       KOMGA_PASSWORD: ${KOMGA_PASSWORD:-}
+      # Where the reader's own browser can reach Komga, if that differs from
+      # the address this server uses. The "Read" links point here.
+      KOMGA_PUBLIC_URL: ${KOMGA_PUBLIC_URL:-}
       CACHE_DB: /data/cache.db
-      # Inkwell reaches Komga over the LAN; the reader's browser might come
-      # through a proxy, so the "Read" links can point somewhere else.
-      # KOMGA_PUBLIC_URL: https://komga.example.com
-      # Where to push "your book arrived" and "the queue has stopped". Any URL
-      # that accepts a POST: ntfy topic, Discord webhook, or your own receiver.
-      # Format is guessed from the URL; PANEL_NOTIFY_FORMAT overrides it with
-      # ntfy, discord or json.
-      PANEL_NOTIFY_URL: ${PANEL_NOTIFY_URL:-}
-      PANEL_NOTIFY_FORMAT: ${PANEL_NOTIFY_FORMAT:-auto}
       COVER_DIR: /data/covers
+      # Set both to put Inkwell behind a password. Leave them empty for a
+      # LAN-only install; see the security note in the README before exposing
+      # this to anything wider.
+      INKWELL_USER: ${INKWELL_USER:-}
+      INKWELL_PASSWORD: ${INKWELL_PASSWORD:-}
+      # Where to push "your book arrived" and "the download queue has stopped".
+      # Any URL that accepts a POST: an ntfy topic, a Discord webhook, your own
+      # receiver. The shape is guessed from the URL; the format variable
+      # overrides it with ntfy, discord or json.
+      INKWELL_NOTIFY_URL: ${INKWELL_NOTIFY_URL:-}
+      INKWELL_NOTIFY_FORMAT: ${INKWELL_NOTIFY_FORMAT:-auto}
       # Optional. metron.cloud — a community comic database with better story
       # arcs than ComicVine. Auth is a bearer token despite the docs describing
-      # basic auth. Put it in a .env beside this file; never commit it.
+      # basic auth. Put it in .env; never commit it.
       METRON_TOKEN: ${METRON_TOKEN:-}
     volumes:
-      # Reuses Mylar's API key without copying it into this project or browser.
-      # The whole directory rather than just config.ini: mylar.db is beside it,
-      # and it is the only place Mylar records which providers have searched,
-      # when, and when the next sweep is due. Read-only, and Inkwell only ever
-      # reads -- the file is journal_mode=delete, so that needs no write access
-      # to the file or its directory.
-      - /mnt/cache/appdata/mylar3/mylar:/run/mylar:ro
-      # Same trick for the Komga login Komf already holds.
-      - /mnt/cache/appdata/komf/application.yml:/run/komf/application.yml:ro
-      # The container is read-only, so the ComicVine cache needs a writable home.
-      # It must outlive the container: rebuilding otherwise costs ~26 slow
-      # ComicVine calls per character all over again.
-      # The volume keeps its old name deliberately: it holds the ComicVine
-      # cache and every proxied cover, and renaming it would orphan all of it
-      # for the sake of a tidier label.
-      - comic-requester-cache:/data
+      # Mylar's own data directory, read-only. This is how Inkwell reuses the
+      # API keys without copying them into this project or the browser, and the
+      # only place Mylar records which providers have searched, when, and when
+      # the next sweep is due. Inkwell never writes here -- mylar.db is
+      # journal_mode=delete, so reading it needs no write access at all.
+      - ${MYLAR_DIR:?set MYLAR_DIR in .env to Mylar's data directory, the one holding config.ini}:/run/mylar:ro
+      # Komf's config, if you run it: the Komga login stays where it already is.
+      # Defaults to a placeholder file so this mount always resolves.
+      - ${KOMF_CONFIG:-./config/komf-placeholder.yml}:/run/komf/application.yml:ro
+      # The container is read-only, so the catalogue needs a writable home. It
+      # must outlive the container: rebuilding costs hundreds of slow ComicVine
+      # calls and every cover all over again.
+      - inkwell-cache:/data
     ports:
-      - 192.168.40.44:3013:3000
+      # Binds to localhost by default, because Inkwell ships with no password.
+      # Set INKWELL_BIND to a LAN address once you have read the README's
+      # security note.
+      - ${INKWELL_BIND:-127.0.0.1}:${INKWELL_PORT:-3013}:3000
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/ready || exit 1"]
       interval: 30s
@@ -64,4 +76,7 @@ services:
       start_period: 20s
 
 volumes:
-  comic-requester-cache:
+  inkwell-cache:
+    # Named explicitly so an existing installation can keep the volume it
+    # already has by setting INKWELL_VOLUME, rather than starting empty.
+    name: ${INKWELL_VOLUME:-inkwell-cache}

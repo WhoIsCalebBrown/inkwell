@@ -175,8 +175,12 @@ function externalUrl(value) {
   } catch { return ''; }
 }
 
-async function api(url, options) {
-  const response = await fetch(url, options);
+async function api(url, options = {}) {
+  // Every request carries this. The server refuses writes without it, which is
+  // what stops a page on another site from queueing or cancelling things here:
+  // a form cannot set a header, and a fetch that tries is stopped by a
+  // preflight Inkwell never answers.
+  const response = await fetch(url, { ...options, headers: { ...options.headers, 'X-Inkwell': '1' } });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'That request could not be completed.');
   return data;
@@ -1346,6 +1350,7 @@ function sinceLabel(text) {
 
 function queueSummary(queue) {
   const { counts } = queue;
+  if (queue.available === false) return 'Download queue unavailable';
   return `${counts.downloading ? `${counts.downloading} downloading` : 'Nothing downloading'} · ${
     counts.waiting} waiting · ${counts.done} finished`;
 }
@@ -1354,7 +1359,11 @@ function queueSummary(queue) {
 function queueWarning(queue) {
   const active = queue.items.filter((item) => item.state === 'Downloading');
   const waiting = queue.items.filter((item) => item.state === 'Queued');
-  if (!queue.items.length) return '';
+  // Say why there is nothing to show, rather than showing nothing. A queue
+  // Inkwell cannot read and a queue with nothing in it look identical here and
+  // mean entirely different things.
+  if (queue.available === false) return `<p class="download-warning">${esc(queue.note || 'Inkwell cannot read Mylar’s download queue.')}</p>`;
+  if (!queue.items.length) return queue.note ? `<p class="sort-note kicker">${esc(queue.note)}</p>` : '';
   const held = active.map((item) => Date.now() - (mylarTime(item.changed)?.getTime() ?? Date.now()));
   const stalled = (waiting.length && !active.length) || held.some((ms) => ms > STALL_AFTER_MS);
   if (!stalled) return '';

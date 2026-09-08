@@ -28,19 +28,52 @@ browser.
 ## Running it
 
 ```sh
-cp .env.example .env      # optional: notifications, Metron
+cp .env.example .env      # set MYLAR_DIR; everything else is optional
 docker compose up -d --build
 ```
 
-The compose file expects an Unraid-style layout: Mylar's appdata directory
-mounted read-only at `/run/mylar` (its `config.ini` for the keys, its
-`mylar.db` for search and queue state) and Komf's config for the Komga login.
-Adjust the paths and the published address at the top of `docker-compose.yml`
-to match your machine.
+`MYLAR_DIR` is the only value you must set: the directory holding Mylar's
+`config.ini` and `mylar.db`, mounted read-only. Inkwell reads both API keys
+from the first, so they never enter this project or the browser, and reads
+search and download state from the second, because Mylar's API does not expose
+it. Every other address and path has a single-host default — see
+`.env.example`.
 
 Without Mylar the server still boots and serves everything held locally —
-browse, publishers, saved books, covers — and says so where a provider is
+browse, publishers, saved books, covers — and says so wherever a provider is
 needed.
+
+## Before you expose it
+
+**Inkwell ships with no password and binds to `127.0.0.1`.** It drives a
+download client: anything that can reach it can queue books, cancel them and
+untrack a series. Two things guard that, and you should know the limits of
+both.
+
+- Set `INKWELL_USER` and `INKWELL_PASSWORD` to put it behind HTTP basic auth.
+  Off by default, because a LAN-only install behind nothing does not need it
+  and a fake login would be worse than an honest none.
+- Requests that change something must carry a header Inkwell's own pages send.
+  A form on another site cannot set one, and a script that tries triggers a
+  preflight Inkwell never answers — so a page you happen to be visiting cannot
+  make your Inkwell act. This is not a substitute for a password.
+
+If you put it on the open internet, put it behind a reverse proxy that
+authenticates, and turn the password on as well.
+
+## What it cannot see
+
+- **The download queue is Mylar's direct-download queue.** Books fetched
+  through an NZB or torrent client do not appear in that section; Mylar tracks
+  those in its own history. Requests, searching and arrivals work the same
+  either way.
+- **That queue is read from Mylar's web interface**, which has no API. A Mylar
+  with `authentication = 1` answers with a login page instead, and Inkwell says
+  so rather than showing an empty list.
+- **Search state is read from `mylar.db` directly**, read-only. It is the only
+  place Mylar records which indexers have been tried and when the next sweep
+  is. A future Mylar could change that schema; if it does, those panels go
+  quiet and nothing else is affected.
 
 ## Working on it
 
@@ -67,3 +100,7 @@ got wrong before, and the ComicVine and Mylar quirks each one cost.
 - **The workings are published.** Every list says where it came from and how it
   was matched, because "that shelf is wrong *because* it is a name match" is a
   useful thing for a reader to be able to say.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

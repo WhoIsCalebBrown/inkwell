@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,14 +63,27 @@ app.use((req, res, next) => {
   next();
 });
 const root = path.dirname(fileURLToPath(import.meta.url));
-// Docker Compose supplies production secrets as environment variables. For
-// direct local `node server.js` development, load the gitignored .env file so
-// optional providers (such as Metron) behave exactly as they do in Docker.
-if (!process.env.METRON_TOKEN && fs.existsSync(path.join(root, '.env'))) {
-  try { process.loadEnvFile(path.join(root, '.env')); } catch { /* local env is optional */ }
+// Docker Compose supplies configuration as environment variables. For a direct
+// local `node server.js`, the gitignored .env fills in whatever the shell has
+// not already set -- never overriding it, so a one-off `MYLAR_URL=… node
+// server.js` still wins over the file.
+const envFile = path.join(root, '.env');
+if (fs.existsSync(envFile)) {
+  try {
+    for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
+      const match = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i);
+      if (!match) continue;
+      const value = match[2].trim().replace(/^(['"])(.*)\1$/, '$2');
+      if (process.env[match[1]] === undefined && value !== '') process.env[match[1]] = value;
+    }
+  } catch { /* a local env file is optional */ }
 }
 const port = Number(process.env.PORT || 3000);
-const mylarUrl = process.env.MYLAR_URL || 'http://192.168.40.44:8090/api';
+// Everything below points at localhost by default. Nothing in this repository
+// should carry the address of the machine it happens to have been written on:
+// a default that works out of the box for a single-host install, and an
+// environment variable for every other shape of network.
+const mylarUrl = (process.env.MYLAR_URL || 'http://127.0.0.1:8090/api').replace(/\/$/, '');
 const configPath = process.env.MYLAR_CONFIG || '/run/mylar/config.ini';
 const komgaConfigPath = process.env.KOMGA_CONFIG || '';
 
@@ -77,9 +91,10 @@ const komgaConfigPath = process.env.KOMGA_CONFIG || '';
 // Mylar key is: the secret stays on the server and never enters this checkout.
 function komgaCredentials() {
   if (process.env.KOMGA_USER && process.env.KOMGA_PASSWORD) {
-    // Compose supplies KOMGA_URL explicitly. The LAN default keeps direct
-    // local `node server.js` development aligned with the Unraid deployment.
-    return { user: process.env.KOMGA_USER, password: process.env.KOMGA_PASSWORD, url: process.env.KOMGA_URL || 'http://192.168.40.44:25600' };
+    return {
+      user: process.env.KOMGA_USER, password: process.env.KOMGA_PASSWORD,
+      url: process.env.KOMGA_URL || 'http://127.0.0.1:25600',
+    };
   }
   if (!komgaConfigPath) return null;
   try {
@@ -625,6 +640,58 @@ async function shelf() {
 }
 
 app.use(express.json({ limit: '32kb' }));
+
+// Inkwell drives a download client. Anything that can reach it can queue,
+// cancel and untrack books, so it ships bound to localhost and these two
+// guards decide what happens when someone points it at a wider network.
+
+// 1. A password, if you set one. Off by default because a LAN-only install
+//    behind no proxy does not need it, and a fake login would be worse than an
+//    honest none. The container's own healthcheck is exempt: it has no
+//    credentials and only reads /api/ready.
+const authUser = process.env.INKWELL_USER || '';
+const authPassword = process.env.INKWELL_PASSWORD || '';
+const sameSecret = (given, expected) => {
+  const a = Buffer.from(String(given));
+  const b = Buffer.from(String(expected));
+  // timingSafeEqual throws on a length mismatch, which is itself a leak of
+  // sorts; compare lengths first and always run the constant-time compare.
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+if (authUser && authPassword) {
+  app.use((req, res, next) => {
+    if (req.path === '/api/ready') return next();
+    const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const [user, ...rest] = Buffer.from(encoded, 'base64').toString('utf8').split(':');
+      if (sameSecret(user, authUser) && sameSecret(rest.join(':'), authPassword)) return next();
+    }
+    res.set('WWW-Authenticate', 'Basic realm="Inkwell", charset="UTF-8"');
+    res.status(401).json({ error: 'Inkwell needs a username and password.' });
+  });
+}
+
+// 2. A page on another site must not be able to make this one act. Inkwell
+//    sends no CORS headers, so a cross-origin fetch cannot read a reply -- but
+//    a plain form POST does not need to read the reply to have done the
+//    damage. Requiring a header a form cannot set closes that: setting one
+//    cross-origin forces a preflight, and Inkwell answers none.
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use((req, res, next) => {
+  if (!WRITES.has(req.method)) return next();
+  const origin = req.get('origin');
+  if (origin) {
+    let host;
+    try { host = new URL(origin).host; } catch { host = null; }
+    if (host !== req.get('host')) {
+      return res.status(403).json({ error: 'That request came from another site.' });
+    }
+  }
+  if (req.get('x-inkwell') !== '1') {
+    return res.status(403).json({ error: 'That request did not come from Inkwell.' });
+  }
+  next();
+});
 // Container health must answer without reaching Mylar, Komga or Metron. Those
 // providers are intentionally diagnosed by /api/health, but a slow optional
 // metadata service must not make an otherwise healthy web server look dead.
@@ -810,9 +877,19 @@ const DOWNLOAD_SOURCES = {
 
 // The DataTables feed behind Manage → Download queue. Its rows are positional:
 // [series, size, progress, status, updated, queueId, issueId, comicId, link].
+// Not every Mylar can answer this. The queue page is part of the web UI, so a
+// Mylar with `authentication = 1` returns its login form instead of JSON, and
+// an installation that downloads over NZB or torrent rather than GetComics has
+// no direct-download queue to report at all. Both are ordinary setups, and
+// both used to produce a silently empty section.
 async function downloadQueue() {
   const data = await mylarWeb('queueManageIt', { iDisplayStart: '0', iDisplayLength: '300' });
-  const rows = Array.isArray(data?.aaData) ? data.aaData : [];
+  if (!data || typeof data !== 'object' || !Array.isArray(data.aaData)) {
+    const error = new Error('Mylar did not answer with its download queue.');
+    error.queueUnavailable = 'Inkwell reads the queue from Mylar’s own web interface. This Mylar answered with something else — usually a login page, which means its web UI is password-protected.';
+    throw error;
+  }
+  const rows = data.aaData;
   return rows.map(([title, size, progress, status, updated, queueId, issueId, comicId, linkType]) => ({
     id: String(queueId ?? ''),
     title: String(title ?? '').trim(),
@@ -843,17 +920,28 @@ async function queuedFor(comicId) {
 }
 
 app.get('/api/downloads', async (_req, res, next) => {
+  const empty = { downloading: 0, waiting: 0, done: 0, failed: 0 };
   try {
     const items = await downloadQueue();
     const counted = (state) => items.filter((item) => item.state === state).length;
     res.json({
-      items,
+      items, available: true,
+      // An empty queue on a working Mylar is not a fault, but it is worth
+      // saying what this section can and cannot see.
+      note: items.length ? null : 'Nothing in Mylar’s direct-download queue. Books fetched through an NZB or torrent client do not appear here — Mylar tracks those in its own history instead.',
       counts: {
         downloading: counted('Downloading'), waiting: counted('Queued'),
         done: counted('Completed'), failed: counted('Failed'),
       },
     });
-  } catch (error) { next(error); }
+  } catch (error) {
+    // A queue Inkwell cannot read must not take the requests page down with
+    // it: everything else on that page comes from somewhere else entirely.
+    if (error.queueUnavailable) {
+      return res.json({ items: [], available: false, note: error.queueUnavailable, counts: empty });
+    }
+    next(error);
+  }
 });
 
 // Inkwell has been a page you have to visit. That is how a download queue sat
@@ -863,8 +951,8 @@ app.get('/api/downloads', async (_req, res, next) => {
 //
 // It reads only what Mylar has already written. It never searches, never
 // queues, and never touches ComicVine.
-const NOTIFY_URL = (process.env.PANEL_NOTIFY_URL || '').trim();
-const NOTIFY_FORMAT = (process.env.PANEL_NOTIFY_FORMAT || 'auto').trim().toLowerCase();
+const NOTIFY_URL = (process.env.INKWELL_NOTIFY_URL || '').trim();
+const NOTIFY_FORMAT = (process.env.INKWELL_NOTIFY_FORMAT || 'auto').trim().toLowerCase();
 const WATCH_INTERVAL_MS = 5 * 60_000;
 // One warning per stall, not one every five minutes for a day.
 const STALL_QUIET_MS = 6 * 60 * 60_000;

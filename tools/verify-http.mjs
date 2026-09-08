@@ -1,7 +1,12 @@
 // Provider-free smoke test for the stable Inkwell HTTP contract.
-// Run inside the container after a rebuild, or point PANEL_URL at a deployment.
+// Run inside the container after a rebuild, or point INKWELL_URL at a deployment.
 
-const base = String(process.env.PANEL_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+const base = String(process.env.INKWELL_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+// The same credentials the server was given, if it was given any: every check
+// below /api/ready is behind them when INKWELL_USER is set.
+const headers = process.env.INKWELL_USER && process.env.INKWELL_PASSWORD
+  ? { Authorization: `Basic ${Buffer.from(`${process.env.INKWELL_USER}:${process.env.INKWELL_PASSWORD}`).toString('base64')}` }
+  : {};
 const checks = [
   ['ready', '/api/ready', 200, (body) => body.ok === true],
   ['empty thread search', '/api/threads', 200, (body) => Array.isArray(body.groups) && body.total === 0],
@@ -15,7 +20,7 @@ const checks = [
 const failures = [];
 for (const [name, path, expectedStatus, assertion] of checks) {
   try {
-    const response = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(20_000) });
+    const response = await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(20_000) });
     const body = await response.json().catch(() => ({}));
     if (response.status !== expectedStatus || !assertion(body)) {
       failures.push({ name, status: response.status, expectedStatus, body });

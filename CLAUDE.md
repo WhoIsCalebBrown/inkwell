@@ -1,7 +1,11 @@
 # Inkwell — working notes for agents
 
-An Overseerr-style request front-end for Mylar3. Single user, LAN-only, deployed
-to Unraid at `192.168.40.44:3013` behind `requests.calebs.online`.
+An Overseerr-style request front-end for Mylar3. Single user, LAN-only, run as
+a container beside Mylar and Komga.
+
+Every address and path is an environment variable with a localhost default —
+see `.env.example`. Do not hard-code the address of whatever machine you are
+working on; that is what a `.env` is for.
 
 This codebase is deliberately AI-written and will stay that way. It is optimised
 for an agent to read the whole of a file, understand why it is shaped that way,

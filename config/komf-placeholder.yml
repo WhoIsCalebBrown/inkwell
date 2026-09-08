@@ -1,0 +1,6 @@
+# Placeholder so the compose file always has something to mount at
+# /run/komf/application.yml. If you run Komf, point KOMF_CONFIG at its real
+# application.yml instead and Inkwell will read the Komga login from it,
+# leaving the password where it already lives. If you do not, set KOMGA_URL,
+# KOMGA_USER and KOMGA_PASSWORD in .env — or leave Komga out entirely, in
+# which case Inkwell simply cannot tell "requested" from "on your shelf".
