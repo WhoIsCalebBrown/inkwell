@@ -193,10 +193,39 @@ changed.
 
 | Finding | Status | Implementation notes | Validation performed | Remaining risk / external validation |
 | --- | --- | --- | --- | --- |
-| SELFHOST-003 | Implemented; publication itself unexercised | `.github/workflows/release.yml` triggers only on `v[0-9]+.[0-9]+.[0-9]+` (plus a `-suffix` prerelease), reuses `ci.yml`, authenticates to GHCR with `GITHUB_TOKEN` alone, and publishes one `linux/amd64` + `linux/arm64` manifest tagged `latest`, `1`, `1.2`, `1.2.3` — with the three moving aliases explicitly gated off for prereleases. It refuses a tag that disagrees with `package.json`, asserts both architectures are in the published manifest, attaches SBOM/provenance and a signed build attestation, and writes the digest into the GitHub Release. `docker-compose.yml` now deploys `ghcr.io/whoiscalebbrown/inkwell:${INKWELL_VERSION:-latest}`; `docker-compose.dev.yml` restores the local build. | Both workflows parse; the tag/alias/prerelease rules, image-name agreement across Compose, template and workflow, and the "no secret but `GITHUB_TOKEN`" rule are asserted by `test/release-contract.test.mjs`. Both Compose files validate with `docker compose config`. Both architectures were built from this Dockerfile on a real Docker host, and the arm64 image was loaded and run under emulation: ready, healthy, `aarch64`, non-root PID 1, `/config` correctly owned. | The first GHCR push, the resulting tag list, the digest, and the attestation can only be confirmed by pushing a tag. GHCR creates the package private: it must be made public, or Unraid's anonymous digest check returns nothing and never offers Update. |
+| SELFHOST-003 | Implemented and exercised end to end | `.github/workflows/release.yml` triggers only on `v[0-9]+.[0-9]+.[0-9]+` (plus a `-suffix` prerelease), reuses `ci.yml`, authenticates to GHCR with `GITHUB_TOKEN` alone, and publishes one `linux/amd64` + `linux/arm64` manifest tagged `latest`, `1`, `1.2`, `1.2.3` — with the three moving aliases explicitly gated off for prereleases. It refuses a tag that disagrees with `package.json`, asserts both architectures are in the published manifest, attaches SBOM/provenance and a signed build attestation, and writes the digest into the GitHub Release. `docker-compose.yml` now deploys `ghcr.io/whoiscalebbrown/inkwell:${INKWELL_VERSION:-latest}`; `docker-compose.dev.yml` restores the local build. | Both workflows parse; the tag/alias/prerelease rules, image-name agreement across Compose, template and workflow, and the "no secret but `GITHUB_TOKEN`" rule are asserted by `test/release-contract.test.mjs`. Both Compose files validate with `docker compose config`. Both architectures were built from this Dockerfile on a real Docker host, and the arm64 image was loaded and run under emulation: ready, healthy, `aarch64`, non-root PID 1, `/config` correctly owned. | Proven by two real releases (see the note below). What remains is visibility, not machinery: the package and repository are private, so Unraid's anonymous digest check cannot see the image and GitHub will not store an attestation. |
 | SELFHOST-009 | Implemented | The image now carries OCI labels (title, description, url, source, documentation, vendor, licences) with version/revision/created supplied per release by `docker/metadata-action`, a `HEALTHCHECK` for hosts that do not read the Compose file, `apk add` moved ahead of the source layers so an emulated arm64 rebuild does not repeat it, and a `.dockerignore` that keeps docs, tests, tools, design bundles and every `.env` out of the build context. The base image stays pinned to `node:22.18.0-alpine`. | Full production-image smoke passed on a real Docker host in 19s. `node:22.18.0-alpine` was confirmed to publish `linux/arm64/v8`, and `su-exec` to exist for `aarch64` on Alpine 3.21/3.22, before either build. Labels were read back off the built arm64 image. | Release-time labels (version, revision, created) are asserted only by the workflow configuration until a tag runs. |
 | SELFHOST-011 | Reviewed and corrected; not yet installed from | `WebUI` now uses `[PORT:3000]`, the container port, so the link follows a changed host port; `TemplateURL` is a raw XML URL rather than a `blob` HTML page; `Registry` points at the GHCR package; `ReadMe`, `Requires` and a `no-new-privileges` `ExtraParams` were added; the optional Komf mount now comes with the `KOMGA_CONFIG` variable that makes it do anything. `/config` remains a required read/write host path and Mylar appdata remains read-only. | The template was rendered through Unraid's own `xmlToCommand()` on an Unraid 7 host: correct image, `-p '3013:3000/tcp'`, `-v '/mnt/user/appdata/inkwell':'/config':'rw'`, read-only Mylar mount, empty optional path correctly omitted. `DockerTemplates::getControlURL()` was called directly to prove `[PORT:3000]` follows a changed host port where `[PORT:3013]` does not. `test/release-contract.test.mjs` guards every one of these properties. | Installing the template on Unraid, seeing "update ready" after a second release, and Community Applications submission all require a published image first. |
-| SELFHOST-013 | Implemented | `.github/workflows/ci.yml` runs on pull requests and pushes to `main` and is `workflow_call`-able, so the release runs the identical checks: lockfile install on the Node version read out of the Dockerfile, a parse of every shipped module, entrypoint shell check, the full test suite, production dependency audit, both Compose files, the Unraid XML, the production-image clean-install/persistence/replacement smoke, and a `linux/amd64,linux/arm64` build. | Every check was run locally or on the Unraid Docker host; the suite is 26 tests, all passing. | The workflows have not been executed by GitHub Actions. Vulnerability scanning of the published image is still not part of the pipeline. |
+| SELFHOST-013 | Implemented | `.github/workflows/ci.yml` runs on pull requests and pushes to `main` and is `workflow_call`-able, so the release runs the identical checks: lockfile install on the Node version read out of the Dockerfile, a parse of every shipped module, entrypoint shell check, the full test suite, production dependency audit, both Compose files, the Unraid XML, the production-image clean-install/persistence/replacement smoke, and a `linux/amd64,linux/arm64` build. | Every check was run locally or on the Unraid Docker host; the suite is 26 tests, all passing. | Both workflows have now run green on GitHub Actions. Vulnerability scanning of the published image is still not part of the pipeline. |
+
+**Publication, as actually exercised (2026-09-08).** Two release candidates were
+tagged and published from this repository:
+
+- `v1.0.0-rc.1` built and pushed `ghcr.io/whoiscalebbrown/inkwell:1.0.0-rc.1`,
+  digest `sha256:cf8bc2b2…`, and the workflow's own assertion confirmed
+  `linux/amd64 present` and `linux/arm64 present`. The prerelease gating worked:
+  that was the only tag pushed — no `latest`, `1` or `1.0`. The run then failed
+  at `actions/attest-build-provenance`, which GitHub does not offer for a
+  user-owned private repository. The attestation step is now conditional on the
+  repository being public.
+- `v1.0.0-rc.2` completed: manifest pushed (digest `sha256:76cf60f1…`), both
+  architectures asserted, attestation skipped, and the GitHub Release created
+  and marked prerelease with the digest and upgrade instructions in its notes.
+
+The first CI run also found a real defect: `tools/verify-docker-smoke.mjs` could
+only run as root, because it read a bind mount the container had chowned to
+`PUID`. On GitHub's non-root runner that aborted the process inside Node's C++
+copy implementation — uncatchable, and it would have masked every later failure.
+The harness now performs the backup, restore, ownership check and cleanup in a
+throwaway root container.
+
+**The remaining gate is visibility, and it is one setting, not a code change.**
+Reproducing Unraid's check against the published tag today returns
+`HTTP/2 401` with no anonymous token, which is exactly the path where
+`getRemoteVersionV2()` returns null and Unraid records status `undef` — no
+Update is ever offered. Making the GHCR package public fixes that; making the
+repository public additionally fixes the template's `Icon` and `TemplateURL`
+raw links and re-enables the attestation.
 
 #### SELFHOST-001
 
