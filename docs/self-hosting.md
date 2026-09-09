@@ -99,7 +99,7 @@ Then go to **Docker → Add Container** and pick **Inkwell** from the template d
 | Field | Value |
 | --- | --- |
 | WebUI Port | `3013` on the host, mapped to container port `3000`. Change the host side freely; the WebUI link follows it. |
-| AppData | `/mnt/user/appdata/inkwell` → `/config`, read/write. Use local appdata on the array, not an SMB/NFS share. |
+| AppData | `/mnt/user/appdata/inkwell` → `/config`, read/write. Never an SMB/NFS share. If appdata is on a pool, prefer the direct pool path such as `/mnt/cache/appdata/inkwell`: `/mnt/user` goes through shfs, and SQLite over FUSE is asking for locking trouble. |
 | Mylar AppData | Your Mylar appdata directory → `/run/mylar`, read-only. This is the folder holding `config.ini` and `mylar.db`, not your comics. |
 | Mylar API URL | Mylar's address including `/api`, for example `http://192.168.1.10:8090/api`. |
 
