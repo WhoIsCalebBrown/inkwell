@@ -1487,11 +1487,24 @@ routes.thread = async (kind, id, encodedName, pageArg) => {
       const cards = kind === 'team' && source === 'team-series'
         ? shown.map((item) => volumeCard({ ...item, title: item.year ? `${item.title} (${item.year})` : item.title }))
         : shown.map(volumeCard);
-      document.querySelector('#thread-books').innerHTML = items.length
-        ? `${note}${filterBar(items.length, shown.length)}${pager('top')}<div class="grid">${cards.join('')}</div>${pager('bottom')}`
-        : filterActive()
-        ? `${filterBar(0, 0)}<div class="empty">No ${esc(contentFilter().format === 'all' ? 'matching' : contentFilter().format.toLowerCase())} books here. <button class="secondary" data-clear-filter>Clear filter</button></div>`
-        : `<div class="empty">Inkwell has not saved any books under the name ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`;
+      // Three states, and the filtered-empty one used to be missed: the test was
+      // `items.length`, the unfiltered page, so a standing Omnibus filter drew
+      // the note, the filter row, a pager, an empty grid and a second pager --
+      // stacked rules around nothing, with no word about why. A filter that
+      // empties a page has to say so, and say that it is only this page,
+      // because the filter runs over the page the server sent, not the run.
+      const filteredOut = Boolean(items.length) && !shown.length;
+      const filteredEmpty = `<div class="empty">
+        <p>The ${esc(contentFilter().format === 'all' ? 'current filter' : `${contentFilter().format} filter`)} hides all ${plural(items.length, 'title')} on this page.${
+          page < pages ? ` There ${pages - page === 1 ? 'is' : 'are'} ${plural(pages - page, 'more page')} to look through.` : ''}</p>
+        <button class="secondary" data-clear-filter>Clear filter</button>
+        ${page < pages ? `<button class="secondary" data-thread-page="${page + 1}">Next page →</button>` : ''}
+      </div>`;
+      document.querySelector('#thread-books').innerHTML = !items.length
+        ? `<div class="empty">Inkwell has not saved any books under the name ${esc(thread.name)} yet. Open a title or search for one to enrich this path; it will never guess from a keyword.</div>`
+        : filteredOut
+        ? `${note}${filterBar(items.length, 0)}${filteredEmpty}`
+        : `${note}${filterBar(items.length, shown.length)}${pager('top')}<div class="grid">${cards.join('')}</div>${pager('bottom')}`;
     })
     .catch(() => { document.querySelector('#thread-books').innerHTML = '<div class="empty">Could not load saved relationships.</div>'; });
 };

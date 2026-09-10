@@ -15,3 +15,17 @@ test('part picker state cannot be mistaken for a discovery collection route', ()
   assert.doesNotMatch(volumeSheet, /id="collection-request"[^>]*data-collection=/);
   assert.match(picker, /slot\.dataset\.preselectParts === 'true'/);
 });
+
+test('a filter that empties a page says so instead of drawing an empty grid', () => {
+  const books = app.slice(app.indexOf('const filteredOut ='), app.indexOf("routes.library"));
+
+  // The bug this guards: the branch keyed off `items.length`, the page the
+  // server sent, so a standing format filter rendered the note, the filter row
+  // and two pagers around nothing at all.
+  assert.match(books, /const filteredOut = Boolean\(items\.length\) && !shown\.length/);
+  assert.match(books, /filteredOut\s*\?\s*`\$\{note\}\$\{filterBar\(items\.length, 0\)\}\$\{filteredEmpty\}`/);
+  assert.doesNotMatch(books, /innerHTML = items\.length/);
+  // It must offer the way out, and admit the filter only saw this page.
+  assert.match(books, /data-clear-filter/);
+  assert.match(books, /on this page/);
+});
