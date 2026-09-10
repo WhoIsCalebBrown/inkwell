@@ -138,6 +138,22 @@ const migrations = [
       }
     },
   },
+  {
+    version: 5,
+    name: 'credit-count-index',
+    up() {
+      // catalogue_links_target_idx is (to_kind, to_id, relation), which cannot
+      // answer "how many volumes credit this person" without a table lookup per
+      // row to check from_kind. SQLite therefore preferred the primary key's
+      // index and scanned every volume link once per object: the characters and
+      // creators page spent ten seconds in SQL before it drew anything. This
+      // index covers the whole predicate, so the count is a seek.
+      db.exec('CREATE INDEX IF NOT EXISTS catalogue_links_credit_idx ON catalogue_links(to_kind, to_id, from_kind)');
+      // Give the planner real numbers as well. The index alone was not enough
+      // to change its mind about the old join.
+      db.exec('ANALYZE');
+    },
+  },
 ];
 
 const migrationLockPath = `${file}.migration.lock`;
@@ -253,12 +269,18 @@ const selectLocalObjects = db.prepare(`SELECT kind, payload FROM catalogue_objec
 // ComicVine's appearance count. Ordering people by "most recently cached" put
 // whoever last matched a search at the top -- a letterer picked up from a
 // credits list outranked Brian K. Vaughan.
-const selectObjectsByKind = db.prepare(`SELECT o.payload, COUNT(l.from_id) AS credits
+// Counted as a correlated subquery, not a LEFT JOIN + GROUP BY. The join form
+// read identically and cost 5 seconds: with no ANALYZE stats SQLite preferred
+// the primary key's own index, whose leading column is from_kind, so counting
+// one character's credits meant walking all ~41k volume links -- once per
+// character. The subquery can only be satisfied by catalogue_links_credit_idx,
+// so it seeks instead of scanning whatever the planner is in the mood for, and
+// the browse page went from 10s to under 100ms. Do not "simplify" this back.
+const selectObjectsByKind = db.prepare(`SELECT o.payload,
+    (SELECT COUNT(*) FROM catalogue_links l
+      WHERE l.to_kind = o.kind AND l.to_id = o.id AND l.from_kind = 'volume') AS credits
   FROM catalogue_objects o
-  LEFT JOIN catalogue_links l
-    ON l.to_kind = o.kind AND l.to_id = o.id AND l.from_kind = 'volume'
   WHERE o.kind = ? AND (? = '' OR o.publisher_normalized LIKE ?)
-  GROUP BY o.kind, o.id
   ORDER BY credits DESC,
            CAST(json_extract(o.payload, '$.count_of_issue_appearances') AS INTEGER) DESC,
            o.fetched_at DESC

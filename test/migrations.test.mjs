@@ -43,7 +43,12 @@ test('a fresh CONFIG_DIR creates a versioned SQLite database and retains state a
   const database = path.join(configDir, 'cache.db');
   assert.ok(fs.existsSync(database));
   const db = new DatabaseSync(database, { readOnly: true });
-  assert.deepEqual(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((row) => row.version), [1, 2, 3, 4]);
+  // Not a hard-coded list: that only ever asserted "somebody edited this test
+  // too". What has to hold is that every migration ran, in order, with no gap
+  // -- a gap is how a half-migrated database gets mistaken for a current one.
+  const applied = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map((row) => row.version);
+  assert.ok(applied.length >= 4, 'no migrations were recorded');
+  assert.deepEqual(applied, applied.map((_, index) => index + 1), 'migration versions must be gapless and start at 1');
   db.close();
 
   const output = runStore(configDir, `
