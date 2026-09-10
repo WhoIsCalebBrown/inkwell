@@ -1743,6 +1743,35 @@ const SEARCH_RESOURCES = { character: 'character', team: 'team', person: 'person
 // for the tier and stays in the code; the interface says what the thing is.
 const THREAD_LABELS = { character: 'Characters', person: 'Creators', team: 'Teams', story_arc: 'Events' };
 
+// A search has to answer "what is this called", not "what is related to this".
+// ComicVine's own search matches deck text and relationships, so searching
+// Wolverine returned Sabretooth, X-23, Daken and Gorgon -- none of which are
+// called Wolverine -- and "x-men" was torn into "x" and "men", returning
+// characters named Ten. Nothing scored the name; the only sort was by issue
+// appearances, which is also why the real X-Men team lost to 3K X-Men.
+function nameTier(query, value) {
+  const text = normalise(value);
+  if (!text) return null;
+  if (text === query) return 0;
+  if (text.startsWith(`${query} `)) return 1;
+  if (text.includes(` ${query} `) || text.endsWith(` ${query}`)) return 2;
+  return null;
+}
+
+// Aliases are how "bruce wayne" finds Batman. They rank below every real name
+// match and are dropped entirely when the query names something exactly --
+// otherwise searching Batman returns every Robin who has worn the cowl, since
+// ComicVine files those as aliases of the person, not of the name.
+function threadMatchTier(query, item) {
+  const byName = nameTier(query, item.name);
+  if (byName !== null) return byName;
+  for (const alias of String(item.aliases || '').split(/[\n,]/)) {
+    const tier = nameTier(query, alias);
+    if (tier !== null) return tier === 0 ? 3 : 4;
+  }
+  return null;
+}
+
 app.get('/api/threads', async (req, res, next) => {
   const q = String(req.query.q || '').trim();
   const publisher = String(req.query.publisher || '').trim();
@@ -1758,7 +1787,7 @@ app.get('/api/threads', async (req, res, next) => {
             query: q,
             resources: Object.values(SEARCH_RESOURCES).join(','),
             limit: '40',
-            field_list: 'id,name,deck,image,publisher,count_of_issue_appearances,resource_type',
+            field_list: 'id,name,aliases,deck,image,publisher,count_of_issue_appearances,resource_type',
           }));
       } catch (error) {
         // A provider outage should not erase a search result the local mirror
@@ -1776,22 +1805,68 @@ app.get('/api/threads', async (req, res, next) => {
       .map((x) => ({
         id: String(x.id),
         kind: x.resource_type,
-        name: x.name,
+        // Story arcs carry a quoted parent title -- '"Green Lantern" Blackest
+        // Night' -- which has to come off before it is shown or matched, or
+        // searching Blackest Night never matches its own arc.
+        name: x.resource_type === 'story_arc' ? String(x.name).replace(ARC_PREFIX, '').trim() : x.name,
+        aliases: x.aliases || '',
         deck: plainText(x.deck || '').slice(0, 160) || null,
         publisher: x.publisher?.name ?? null,
         medium: mediumOf(x.publisher?.name),
         appearances: Number(x.count_of_issue_appearances) || 0,
         image: x.image?.medium_url ?? null,
       }))
-      .filter((x) => !publisher || String(x.publisher || '').startsWith(publisher))
-      .sort((a, b) => b.appearances - a.appearances);
+      .filter((x) => !publisher || String(x.publisher || '').startsWith(publisher));
+    const needle = normalise(q);
+    const scored = items
+      .map((item) => ({ ...item, tier: threadMatchTier(needle, item) }))
+      .filter((item) => item.tier !== null);
+    // When the query names something exactly, that is what the reader meant.
+    // Partial and alias matches stay only if nothing is called this: searching
+    // "bruce wayne" still has to reach Batman, but searching "batman" must not
+    // return four Robins and a Gordon.
+    const exact = scored.some((item) => item.tier === 0);
+    const kept = exact ? scored.filter((item) => item.tier <= 2) : scored;
+
     // Bucket by kind before trimming. Creators and story arcs carry no issue
     // appearance count, so a single global sort by prominence buries them
     // entirely -- searching "junji ito" returned characters named Ito and not
     // the man himself.
-    const quota = { character: 10, person: 6, team: 5, story_arc: 5 };
+    const quota = { character: 6, person: 4, team: 3, story_arc: 3 };
     const groups = Object.keys(quota)
-      .map((kind) => ({ kind, label: THREAD_LABELS[kind], items: items.filter((x) => x.kind === kind).slice(0, quota[kind]) }))
+      .map((kind) => {
+        const mine = kept.filter((item) => item.kind === kind);
+        // A whole section of near-misses is noise next to a section that holds
+        // the thing itself. Searching Wolverine should not offer a Teams shelf
+        // whose only member is Wolverine Squad; searching X-Men should still
+        // offer Teams, because one of them is exactly what was asked for.
+        if (exact && !mine.some((item) => item.tier === 0)) return { kind, label: THREAD_LABELS[kind], items: [] };
+        // ComicVine files four different characters called Batman. Show the
+        // one a reader means and keep the rest out of a row of identical cards.
+        const best = new Map();
+        for (const item of mine) {
+          const key = normalise(item.name);
+          const seen = best.get(key);
+          if (!seen || item.appearances > seen.appearances) best.set(key, item);
+        }
+        // ComicVine files a Wolverine Clone, a Counter-Earth Wolverine and a
+        // Wolverine (Doppelganger), each with a handful of appearances. They
+        // are all genuinely called Wolverine, so they survive the name test --
+        // and they are still not who anyone searching Wolverine meant. Once
+        // the real one is present, a partial match has to have been somewhere.
+        // Only characters are judged this way: creators, teams and arcs carry
+        // no appearance count at all, so the same floor would empty them.
+        const known = kind === 'character' && mine.some((item) => item.tier === 0)
+          ? [...best.values()].filter((item) => item.tier === 0 || item.appearances >= 100)
+          : [...best.values()];
+        const items = known.sort((a, b) =>
+          a.tier - b.tier
+          || b.appearances - a.appearances
+          // Teams and arcs have no appearance count at all, so the shortest
+          // matching name is the only usable tiebreak: X-Men over Dark X-Men.
+          || String(a.name).length - String(b.name).length);
+        return { kind, label: THREAD_LABELS[kind], items: items.slice(0, quota[kind]) };
+      })
       .filter((g) => g.items.length);
     res.json({ groups, total: groups.reduce((n, g) => n + g.items.length, 0) });
   } catch (error) { next(error); }
