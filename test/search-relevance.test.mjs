@@ -30,6 +30,7 @@ const CATALOGUE = [
   { id: 11, name: 'Bruce Wayne (dog)', resource_type: 'character', count_of_issue_appearances: 0, image: { medium_url: 'x' } },
   { id: 12, name: 'Colonel Bruce Wayne', resource_type: 'character', count_of_issue_appearances: 2, image: { medium_url: 'x' } },
   { id: 7, name: 'X-Men', resource_type: 'team', image: { medium_url: 'x' } },
+  { id: 13, name: 'Spider-Man', resource_type: 'character', count_of_issue_appearances: 19000, image: { medium_url: 'x' } },
   { id: 8, name: '3K X-Men', resource_type: 'team', image: { medium_url: 'x' } },
   { id: 9, name: 'Wolverine Squad', resource_type: 'team', image: { medium_url: 'x' } },
   { id: 10, name: '"Green Lantern" Blackest Night', resource_type: 'story_arc', image: { medium_url: 'x' } },
@@ -112,6 +113,17 @@ test('an exact match decides which kinds are worth showing at all', async () => 
     // shelf holding only Wolverine Squad is noise beside it.
     const wolverine = await search('wolverine');
     assert.ok(!wolverine.team, 'a partial-match section survived beside an exact match');
+  });
+});
+
+test('a reader does not have to guess the punctuation', async () => {
+  await withServer(async (search) => {
+    // normalise() stores "Spider-Man" as "spider man", so a search for
+    // "spiderman" compared equal to nothing and the page came back empty.
+    assert.equal((await search('spiderman')).character?.[0], 'Spider-Man');
+    assert.equal((await search('spider-man')).character?.[0], 'Spider-Man');
+    assert.equal((await search('xmen')).team?.[0], 'X-Men');
+    assert.equal((await search('x men')).team?.[0], 'X-Men');
   });
 });
 

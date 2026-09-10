@@ -1749,11 +1749,19 @@ const THREAD_LABELS = { character: 'Characters', person: 'Creators', team: 'Team
 // called Wolverine -- and "x-men" was torn into "x" and "men", returning
 // characters named Ten. Nothing scored the name; the only sort was by issue
 // appearances, which is also why the real X-Men team lost to 3K X-Men.
+// Spacing is not something a reader should have to get right. normalise() turns
+// punctuation into spaces, so "Spider-Man" is stored as "spider man" and a
+// search for "spiderman" compared equal to nothing and was dropped -- the whole
+// result set came back empty. Word boundaries are judged on the spaced form;
+// identity and prefix also accept the space-free form, which is what lets
+// xmen, spiderman and starwars find their hyphenated selves.
+const withoutSpaces = (text) => text.replace(/ /g, '');
+
 function nameTier(query, value) {
   const text = normalise(value);
   if (!text) return null;
-  if (text === query) return 0;
-  if (text.startsWith(`${query} `)) return 1;
+  if (text === query || withoutSpaces(text) === withoutSpaces(query)) return 0;
+  if (text.startsWith(`${query} `) || withoutSpaces(text).startsWith(withoutSpaces(query))) return 1;
   if (text.includes(` ${query} `) || text.endsWith(` ${query}`)) return 2;
   return null;
 }

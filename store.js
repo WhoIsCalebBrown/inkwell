@@ -259,9 +259,16 @@ const selectLocalVolumes = db.prepare(`SELECT payload FROM catalogue_volumes
 const cachedPayloads = db.prepare('SELECT value FROM cache');
 const selectVolume = db.prepare('SELECT payload FROM catalogue_volumes WHERE id = ?');
 const selectObject = db.prepare('SELECT payload FROM catalogue_objects WHERE kind = ? AND id = ?');
+// The compact comparisons exist because a reader types "spiderman" and means
+// Spider-Man. normalise() turns punctuation into spaces, so the stored name is
+// "spider man" and a LIKE for "spiderman" matched nothing at all. These are
+// unindexed either way -- a leading-wildcard LIKE always scans -- so removing
+// the spaces costs nothing on a catalogue this size.
 const selectLocalObjects = db.prepare(`SELECT kind, payload FROM catalogue_objects
   WHERE kind IN (SELECT value FROM json_each(?))
-    AND (name_normalized LIKE ? OR aliases_normalized LIKE ? OR publisher_normalized LIKE ?)
+    AND (name_normalized LIKE ? OR aliases_normalized LIKE ? OR publisher_normalized LIKE ?
+      OR REPLACE(name_normalized, ' ', '') LIKE ?
+      OR REPLACE(aliases_normalized, ' ', '') LIKE ?)
   ORDER BY fetched_at DESC LIMIT ?`);
 // Threads have a browse destination, not just a search result, so they need a
 // listing that is not driven by a query.
@@ -541,7 +548,11 @@ export function findObjects(query, kinds, limit = 100) {
   const terms = normalise(query).split(' ').filter(Boolean);
   if (!terms.length || !Array.isArray(kinds) || !kinds.length) return [];
   const phrase = `%${terms.join('%')}%`;
-  const rows = selectLocalObjects.all(JSON.stringify(kinds), phrase, phrase, phrase,
+  // "spiderman" against a stored "spider man", and "spider man" against a
+  // stored "spiderman": both sides lose their spaces so either spelling finds
+  // the other.
+  const compact = `%${terms.join('')}%`;
+  const rows = selectLocalObjects.all(JSON.stringify(kinds), phrase, phrase, phrase, compact, compact,
     Math.min(500, Math.max(1, Number(limit) || 100)));
   return rows.flatMap(({ kind, payload }) => {
     try {
