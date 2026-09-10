@@ -1852,11 +1852,15 @@ app.get('/api/threads', async (req, res, next) => {
         // ComicVine files a Wolverine Clone, a Counter-Earth Wolverine and a
         // Wolverine (Doppelganger), each with a handful of appearances. They
         // are all genuinely called Wolverine, so they survive the name test --
-        // and they are still not who anyone searching Wolverine meant. Once
-        // the real one is present, a partial match has to have been somewhere.
+        // and they are still not who anyone searching Wolverine meant. Anything
+        // short of an exact match therefore has to have been somewhere.
+        // This deliberately applies whether or not an exact match exists:
+        // nothing is called exactly "Bruce Wayne", so without the floor a
+        // never-published dog named Bruce Wayne, a Bruce Wayne XX and a Colonel
+        // Bruce Wayne all outranked Batman, whose alias it is.
         // Only characters are judged this way: creators, teams and arcs carry
         // no appearance count at all, so the same floor would empty them.
-        const known = kind === 'character' && mine.some((item) => item.tier === 0)
+        const known = kind === 'character'
           ? [...best.values()].filter((item) => item.tier === 0 || item.appearances >= 100)
           : [...best.values()];
         const items = known.sort((a, b) =>

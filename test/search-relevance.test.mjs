@@ -25,6 +25,10 @@ const CATALOGUE = [
   { id: 4, name: 'Wolverine Clone', resource_type: 'character', count_of_issue_appearances: 3, image: { medium_url: 'x' } },
   { id: 5, name: 'Batman', resource_type: 'character', count_of_issue_appearances: 25132, aliases: 'Bruce Wayne\nThe Dark Knight', image: { medium_url: 'x' } },
   { id: 6, name: 'Dick Grayson', resource_type: 'character', count_of_issue_appearances: 10236, image: { medium_url: 'x' } },
+  // ComicVine really does file these, with no appearances at all, and they are
+  // the only things literally named Bruce Wayne.
+  { id: 11, name: 'Bruce Wayne (dog)', resource_type: 'character', count_of_issue_appearances: 0, image: { medium_url: 'x' } },
+  { id: 12, name: 'Colonel Bruce Wayne', resource_type: 'character', count_of_issue_appearances: 2, image: { medium_url: 'x' } },
   { id: 7, name: 'X-Men', resource_type: 'team', image: { medium_url: 'x' } },
   { id: 8, name: '3K X-Men', resource_type: 'team', image: { medium_url: 'x' } },
   { id: 9, name: 'Wolverine Squad', resource_type: 'team', image: { medium_url: 'x' } },
@@ -113,7 +117,13 @@ test('an exact match decides which kinds are worth showing at all', async () => 
 
 test('an alias still reaches the character when nothing carries the name', async () => {
   await withServer(async (search) => {
-    assert.equal((await search('bruce wayne')).character?.[0], 'Batman');
+    // A name match normally beats an alias match -- but not when the only
+    // things carrying the name have never appeared in anything. A dog outranked
+    // Batman here until the prominence floor stopped applying only to searches
+    // that already had an exact match.
+    const wayne = await search('bruce wayne');
+    assert.equal(wayne.character?.[0], 'Batman');
+    assert.ok(!wayne.character?.includes('Bruce Wayne (dog)'), 'a dog with no appearances outranked Batman');
     // ComicVine prefixes an arc with its parent title in quotes; matching has
     // to see through that or an arc never matches its own name.
     assert.equal((await search('blackest night')).story_arc?.[0], 'Blackest Night');
