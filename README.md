@@ -11,6 +11,17 @@ you say so.
 
 Single user, LAN only, no build step, no framework, no bundler.
 
+![Inkwell's Discover page](docs/screenshots/discover-desktop.png)
+
+<details>
+<summary>More screenshots</summary>
+
+![Browse by publisher and event](docs/screenshots/browse-desktop.png)
+![Choose and request a comic collection](docs/screenshots/volume-request-detail.png)
+![Connection diagnostics](docs/screenshots/settings-connections.png)
+
+</details>
+
 ## What it talks to
 
 | Service | For | Required |
@@ -19,7 +30,6 @@ Single user, LAN only, no build step, no framework, no bundler.
 | **ComicVine** | Books: titles, issue counts, covers, who is in them | Yes (key read from Mylar's config) |
 | **Komga** | Proof a book actually arrived, and the link to read it | Optional |
 | **Wikidata** | Who a character is: creators, universe, teams, family | Optional, no key |
-| **Metron** | Supplementary story-arc data | Optional |
 
 Mylar's own `config.ini` is mounted read-only, so both API keys stay on the
 server and key rotation needs no redeploy. Nothing key-shaped ever reaches the

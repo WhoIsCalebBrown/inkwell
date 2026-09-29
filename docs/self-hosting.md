@@ -45,7 +45,23 @@ MYLAR_URL=http://mylar:8090/api
 
 For Mylar in another Docker project, `mylar` must resolve from Inkwell (for example via a shared external network). For a LAN-hosted Mylar, use its LAN address such as `http://192.168.1.10:8090/api`. Do not use `127.0.0.1` unless Mylar shares Inkwell's network namespace.
 
-After changing deployment configuration, run `docker compose up -d`. Setup can test the Mylar API. A temporarily unreachable Mylar, Komga, Metron, or metadata provider does not stop Inkwell from serving setup or locally saved data.
+After changing deployment configuration, run `docker compose up -d`. Setup can test the Mylar API. A temporarily unreachable Mylar, Komga, or metadata provider does not stop Inkwell from serving setup or locally saved data.
+
+## Connections and permissions
+
+Inkwell listens on container port `3000` and makes only the outbound connections below. It does not need the Docker socket or a comics, downloads, or media-library mount.
+
+| Connection | Required | Access and failure behavior |
+| --- | --- | --- |
+| Mylar API (`MYLAR_URL`) | Yes | Reads the watchlist and issue state and performs the request actions a reader confirms: add or stop tracking a series, queue or cancel parts, and start a search. Mylar carries its API key in the query string, so keep this traffic on a trusted container network, private LAN, VPN, or HTTPS connection. |
+| Mylar appdata (`/run/mylar`) | Normal install | Read-only access to `config.ini` supplies the Mylar and ComicVine keys. Read-only access to `mylar.db` adds provider-search timing, wanted dates, scheduled-sweep state, and arrival events. Direct environment keys can replace the config file, but database-backed diagnostics then remain unavailable. |
+| Mylar web UI | Optional enhancement | Reads and controls Mylar's direct-download queue because Mylar exposes no API for it. If Mylar's own web authentication is enabled, these queue panels and retry/stop controls are unavailable; ordinary API requests still work. Set `MYLAR_WEB_URL` only when this address differs from `MYLAR_URL` without `/api`. |
+| ComicVine HTTPS and its cover hosts | Yes for a fresh catalogue | Supplies book metadata, covers, creators, characters, teams, and events. Inkwell paces calls globally, backs off on rate limits, and continues serving its saved local catalogue during an outage. |
+| Komga API (`KOMGA_URL`) | No | Read-only Basic-authenticated API access identifies which requested books reached the shelf and supplies read links and thumbnails. Credentials come from a read-only Komf config or `KOMGA_USER` / `KOMGA_PASSWORD`; no Komga media mount is needed. |
+| Wikidata HTTPS | No | Keyless character and team relationships. Calls are serialized, cached for a month, and never block the underlying ComicVine page when unavailable. |
+| Notification URL | No | Sends arrival and stalled-download events by outbound POST in ntfy, Discord, or JSON form. Treat the entire URL as a secret because Discord and some other receivers embed credentials in it. |
+
+For a same-host multi-container installation, a shared private Docker network and service names such as `http://mylar:8090/api` and `http://komga:25600` avoid routing API credentials over the wider LAN. A normal LAN address is also supported. Self-signed HTTPS endpoints require their issuing CA to be trusted by the container; there is deliberately no “disable certificate verification” setting.
 
 ## Configuration
 
@@ -60,7 +76,7 @@ Normal users set `MYLAR_DIR` and `MYLAR_URL`. The deployment values below have s
 | `INKWELL_UNRAID_ICON` | empty | Optional PNG icon path or URL for the Unraid Docker page; ignored by ordinary Docker. The provided template uses `public/inkwell-unraid.png`, a 256px square. |
 | `INKWELL_VERSION` | empty (`latest`) | Which published image to deploy. Pin an exact version, such as `1.2.3`, to decide for yourself when to upgrade. |
 
-Optional integrations are `KOMGA_URL`, either `KOMF_CONFIG` or `KOMGA_USER` / `KOMGA_PASSWORD`, `KOMGA_PUBLIC_URL`, `METRON_TOKEN`, and notifications. `MYLAR_API_KEY`, `COMICVINE_API_KEY`, `MYLAR_WEB_URL`, and `INKWELL_TRUSTED_PROXIES` are advanced. Never commit a populated `.env` file.
+Optional integrations are `KOMGA_URL`, either `KOMF_CONFIG` or `KOMGA_USER` / `KOMGA_PASSWORD`, `KOMGA_PUBLIC_URL`, and notifications. `MYLAR_API_KEY`, `COMICVINE_API_KEY`, `MYLAR_WEB_URL`, and `INKWELL_TRUSTED_PROXIES` are advanced. Never commit a populated `.env` file.
 
 Do not set `CONFIG_DIR`, `CACHE_DB`, `COVER_DIR`, or `PORT` in ordinary container installs; they are internal runtime settings.
 
@@ -86,7 +102,7 @@ To restore, stop Inkwell, replace the entire `/config` bind mount or Docker volu
 
 ## Unraid
 
-Inkwell ships a container template, [`unraid/inkwell.xml`](../unraid/inkwell.xml). It is not in Community Applications yet, and current Unraid releases no longer download templates from a "template repository" URL, so install it by putting the file on the flash drive:
+Inkwell ships a Community Applications-ready container template, [`unraid/inkwell.xml`](../unraid/inkwell.xml). Until its catalog submission is approved, install it by putting the file on the flash drive:
 
 ```sh
 # On the Unraid server, or over the flash share:
@@ -103,7 +119,7 @@ Then go to **Docker → Add Container** and pick **Inkwell** from the template d
 | Mylar AppData | Your Mylar appdata directory → `/run/mylar`, read-only. This is the folder holding `config.ini` and `mylar.db`, not your comics. |
 | Mylar API URL | Mylar's address including `/api`, for example `http://192.168.1.10:8090/api`. |
 
-`PUID` `99`, `PGID` `100` and `UMASK` `002` are Unraid's normal ownership and are already the template's defaults. Everything else — shared username and password, Komga, Komf, notifications, Metron, trusted proxies — is optional and hidden under Advanced view. There is deliberately no comics or media mapping: Inkwell never touches comic files.
+`PUID` `99`, `PGID` `100` and `UMASK` `002` are Unraid's normal ownership and are already the template's defaults. Everything else — shared username and password, Komga, Komf, notifications, a separate Mylar web address, and trusted proxies — is optional and hidden under Advanced view. There is deliberately no comics or media mapping: Inkwell never touches comic files.
 
 **Updates are image digest updates, not Git commits.** Unraid does not watch this repository. It asks GHCR for the digest behind the tag in the template's repository field — `ghcr.io/whoiscalebbrown/inkwell:latest` — and compares it with the digest it already pulled. A new release changes that digest, so the container shows **update ready**. Pinning an exact version in that field instead is supported and simply means no update is ever offered.
 

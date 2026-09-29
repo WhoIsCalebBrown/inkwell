@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<CommunityApplications>
+  <Profile>Inkwell is a reading-room-style request front end for Mylar3. Browse comics by publisher, character, creator, team, or event; choose the books you want; and follow each request until it reaches an optional Komga library.</Profile>
+  <Icon>https://raw.githubusercontent.com/WhoIsCalebBrown/inkwell/main/public/inkwell-unraid.png</Icon>
+  <WebPage>https://github.com/WhoIsCalebBrown/inkwell</WebPage>
+  <Forum>https://github.com/WhoIsCalebBrown/inkwell/issues</Forum>
+</CommunityApplications>
