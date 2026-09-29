@@ -94,7 +94,8 @@ jobs:
       # Unraid parses this XML with DOMDocument; a template that is not
       # well-formed silently fails to install.
       - name: Validate the Unraid template XML
-        run: python3 -c "import xml.etree.ElementTree as ET; ET.parse('unraid/inkwell.xml')"
+        run: |
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('unraid/inkwell.xml'); ET.parse('ca_profile.xml')"
 
   image:
     name: Image build and container smoke

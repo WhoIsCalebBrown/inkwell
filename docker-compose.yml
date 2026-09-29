@@ -67,10 +67,6 @@ services:
       # overrides it with ntfy, discord or json.
       INKWELL_NOTIFY_URL: ${INKWELL_NOTIFY_URL:-}
       INKWELL_NOTIFY_FORMAT: ${INKWELL_NOTIFY_FORMAT:-auto}
-      # Optional. metron.cloud — a community comic database with better story
-      # arcs than ComicVine. Auth is a bearer token despite the docs describing
-      # basic auth. Put it in .env; never commit it.
-      METRON_TOKEN: ${METRON_TOKEN:-}
     volumes:
       # Mylar's own data directory, read-only. This is how Inkwell reuses the
       # API keys without copying them into this project or the browser, and the

@@ -319,7 +319,7 @@ routes.setup = async () => {
     </section>
     <section class="settings-section">
       <div class="section-head"><span class="kicker no">03</span><h2>Finish</h2></div>
-      <div class="cache-card"><div><b>Ready when both required connections are configured.</b><p>Komga, Metron, notifications, and advanced Mylar settings can be added later from your deployment configuration. Completing setup does not modify Mylar or Komga.</p></div><button class="act" data-complete-setup${mylarConfigured && comicVineConfigured ? '' : ' disabled'}>Finish setup</button></div>
+      <div class="cache-card"><div><b>Ready when both required connections are configured.</b><p>Komga, notifications, and advanced Mylar settings can be added later from your deployment configuration. Completing setup does not modify Mylar or Komga.</p></div><button class="act" data-complete-setup${mylarConfigured && comicVineConfigured ? '' : ' disabled'}>Finish setup</button></div>
     </section>`;
 };
 
@@ -1995,7 +1995,7 @@ const healthState = (available, ready, missing) => available ? ready : missing;
 // fills these in when they answer.
 function connectionsHtml(health) {
   if (!health) {
-    return ['ComicVine', 'Mylar', 'Komga', 'Metron']
+    return ['ComicVine', 'Mylar', 'Komga']
       .map((name) => `<article class="connection"><span class="kicker">&nbsp;</span><b>${name}</b>
         <p class="status muted">Checking…</p></article>`).join('');
   }
@@ -2004,12 +2004,6 @@ function connectionsHtml(health) {
     : 'Available';
   // available means "a token is set"; reachable means the host answered. They
   // are different facts and the page used to report the first as the second.
-  const metron = !health.metron?.available ? 'Not configured'
-    : health.metron.reachable === true ? 'Connected'
-    : health.metron.reachable === false ? `Not reachable · ${health.metron.reason || 'no answer'}`
-    : 'Checking…';
-  const metronState = !health.metron?.available ? 'muted'
-    : health.metron.reachable === false ? 'warn' : 'good';
   const setup = health.setup;
   const setupNotice = setup?.ready ? '' : `<div class="empty" style="grid-column:1/-1;margin:0">
     <b>Inkwell is running, but setup needs attention.</b><br />
@@ -2021,8 +2015,7 @@ function connectionsHtml(health) {
     ${setupNotice}
     <article class="connection"><span class="kicker">Catalogue</span><b>ComicVine</b><p class="status ${health.comicvine?.limited ? 'warn' : 'good'}">${esc(rate)}</p><small>Metadata, covers, people and series discovery.</small></article>
     <article class="connection"><span class="kicker">Requests</span><b>Mylar</b><p class="status ${health.mylar ? 'good' : 'warn'}">${health.mylar ? 'Connected' : 'Not answering'}</p><small>Watchlist and background searching.</small></article>
-    <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>
-    <article class="connection"><span class="kicker">Supplement</span><b>Metron</b><p class="status ${metronState}">${esc(metron)}</p><small>Optional story-arc data. No token is required for Inkwell to work.</small></article>`;
+    <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>`;
 }
 
 routes.settings = async () => {

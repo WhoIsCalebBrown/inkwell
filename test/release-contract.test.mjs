@@ -18,6 +18,8 @@ const composeDev = read('docker-compose.dev.yml');
 const ci = read('.github/workflows/ci.yml');
 const release = read('.github/workflows/release.yml');
 const template = read('unraid/inkwell.xml');
+const profile = read('ca_profile.xml');
+const app = read('public/app.js');
 
 const IMAGE = 'ghcr.io/whoiscalebbrown/inkwell';
 
@@ -105,6 +107,26 @@ test('the Unraid template keeps /config on the host and lets Unraid see a new di
   // A blob URL serves HTML, so a template refresh would fetch a web page.
   assert.match(template, /<TemplateURL>https:\/\/raw\.githubusercontent\.com\/.+\.xml<\/TemplateURL>/);
 
+  // Match the hardened Compose runtime. /config remains writable because it is
+  // a bind mount even when the image's root filesystem is immutable.
+  assert.match(template, /<ExtraParams>[^<]*--read-only\b[^<]*<\/ExtraParams>/);
+  assert.match(template, /<ExtraParams>[^<]*--restart=unless-stopped\b[^<]*<\/ExtraParams>/);
+  assert.match(template, /<ExtraParams>[^<]*--security-opt=no-new-privileges:true\b[^<]*<\/ExtraParams>/);
+
+  const notifier = templateConfigs.find((config) => config.Target === 'INKWELL_NOTIFY_URL');
+  assert.equal(notifier?.Mask, 'true', 'webhook URLs can contain credentials and must be masked');
+
+  assert.match(profile, /<Profile>\S[\s\S]*<\/Profile>/, 'Community Applications requires a non-empty repository profile');
+  assert.match(template, /<Screenshot>https:\/\/raw\.githubusercontent\.com\/.+<\/Screenshot>/);
+
+  const rawPrefix = 'https://raw.githubusercontent.com/WhoIsCalebBrown/inkwell/main/';
+  const screenshots = [...template.matchAll(/<Screenshot>([^<]+)<\/Screenshot>/g)].map((match) => match[1]);
+  assert.ok(screenshots.length >= 3, 'the Community Applications listing needs representative screenshots');
+  for (const url of screenshots) {
+    assert.ok(url.startsWith(rawPrefix), `screenshot is not hosted by this repository: ${url}`);
+    assert.ok(fs.existsSync(path.join(root, url.slice(rawPrefix.length))), `screenshot does not exist: ${url}`);
+  }
+
   // Every variable the template offers must be one something actually reads:
   // the server, the store, or the entrypoint that owns /config.
   // Read the modules the image actually ships, taken from the Dockerfile so a
@@ -116,4 +138,12 @@ test('the Unraid template keeps /config on the host and lets Unraid see a new di
     .map((entry) => entry.Target)
     .filter((name) => !new RegExp(`(process\\.env\\.${name}\\b|\\$\\{${name}:)`).test(consumers));
   assert.deepEqual(unread, [], 'the template offers variables nothing reads');
+});
+
+test('release surfaces advertise only integrations that provide user-visible data', () => {
+  // The Metron capture client remains a developer tool until real payloads
+  // have a tested mapping. A health probe alone is not a product integration.
+  for (const [name, surface] of [['Compose', compose], ['Unraid template', template], ['settings UI', app]]) {
+    assert.doesNotMatch(surface, /\bMetron\b|METRON_TOKEN/, `${name} advertises the dormant Metron client`);
+  }
 });

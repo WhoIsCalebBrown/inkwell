@@ -15,7 +15,6 @@ import {
   recordEvent, listEvents, discoveryCatalogue, close as closeStore, databaseLifecycle,
   readSetting, writeSetting,
 } from './store.js';
-import * as metron from './metron.js';
 import * as lore from './lore.js';
 import { supplement } from './enrich.js';
 import {
@@ -872,7 +871,7 @@ app.use((req, res, next) => {
     code: 'setup_required',
   });
 });
-// Container health must answer without reaching Mylar, Komga or Metron. Those
+// Container health must answer without reaching Mylar or Komga. Those
 // providers are intentionally diagnosed by /api/health, but a slow optional
 // metadata service must not make an otherwise healthy web server look dead.
 app.get('/api/ready', (_req, res) => {
@@ -916,28 +915,6 @@ app.get('/api/setup/mylar-test', async (_req, res) => {
   if (!connected) return res.status(503).json({ ok: false, error: 'Mylar did not answer. Check its URL, API key, and network access.' });
   return res.json({ ok: true });
 });
-// A status page must never be slower than the thing it reports on. This route
-// used to call Metron live on every request: when that host is unreachable --
-// which it has been for days at a time -- the settings page sat on "Loading
-// connection status" for the full timeout, twelve seconds, and then said
-// Metron was down. The answer is kept and refreshed behind the request.
-const METRON_HEALTH_TTL = 10 * 60_000;
-let metronHealth = { available: metron.available(), reachable: null, reason: 'not checked yet', checkedAt: null };
-let metronProbe = null;
-
-function metronStatus() {
-  const stale = !metronHealth.checkedAt || Date.now() - metronHealth.checkedAt > METRON_HEALTH_TTL;
-  if (stale && !metronProbe && metron.available()) {
-    metronProbe = metron.status()
-      .then((result) => { metronHealth = { ...result, checkedAt: Date.now() }; })
-      .catch((error) => {
-        metronHealth = { available: true, reachable: false, reason: error.message, checkedAt: Date.now() };
-      })
-      .finally(() => { metronProbe = null; });
-  }
-  return metronHealth;
-}
-
 // Mylar's client waits two minutes, which is right for a request that matters
 // and wrong for a diagnostic. If the watchlist cannot answer promptly, that is
 // itself the answer.
@@ -959,7 +936,6 @@ app.get('/api/health', async (_req, res) => {
       comicvine: comicVineStatus(),
       cache: cacheStats(),
       enrichment: enrichmentStats(),
-      metron: metronStatus(),
       setup: setupStatus(),
     });
   }
@@ -2922,10 +2898,9 @@ app.get('/api/discover/collection/:id', async (req, res, next) => {
 });
 
 // Supplement providers, consulted only on detail views. Each returns a partial
-// record in this app's own shape, or null. Metron is absent until its payloads
-// have actually been observed -- its field names are not documented well enough
-// to map from the docs alone, and guessing is how the Marvel provider went in
-// and straight back out.
+// record in this app's own shape, or null. The list stays empty until a provider
+// has a captured payload and a tested mapping; advertising a token for a client
+// that only probes its own health misrepresents what a deployment can do.
 async function supplementsFor(item) {
   const providers = [];
   const settled = await Promise.allSettled(providers.map((p) => p(item)));
