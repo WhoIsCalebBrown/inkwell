@@ -1,6 +1,6 @@
 # Inkwell
 
-A request front end for [Mylar3](https://github.com/mylar3/mylar3) — the shape
+A request front end for [Mylar3](https://github.com/MylarComics/mylar3) — the shape
 of Overseerr, but for comics, where the hard part is not "which season" but
 which of six books called *The Amazing Spider-Man* is the one you meant.
 
