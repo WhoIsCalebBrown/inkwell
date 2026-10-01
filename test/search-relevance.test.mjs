@@ -62,7 +62,7 @@ async function withServer(run) {
   const port = await freePort();
   const child = spawn(process.execPath, ['server.js'], {
     cwd: root,
-    env: { ...process.env, PORT: String(port), CONFIG_DIR: configDir, MYLAR_CONFIG: '/dev/null' },
+    env: { ...process.env, PORT: String(port), CONFIG_DIR: configDir, MYLAR_CONFIG: '/dev/null', INKWELL_ACCESS_MODE: 'single' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {

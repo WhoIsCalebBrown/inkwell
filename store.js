@@ -154,6 +154,96 @@ const migrations = [
       db.exec('ANALYZE');
     },
   },
+  {
+    version: 6,
+    name: 'accounts-and-approval-requests',
+    up() {
+      // These records are user-owned history, not rebuildable provider cache.
+      db.exec(`
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          display_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin', 'requester')),
+          password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE sessions (
+          token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+          expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL
+        );
+        CREATE INDEX sessions_user_idx ON sessions(user_id);
+        CREATE TABLE invitations (
+          token_hash TEXT PRIMARY KEY, role TEXT NOT NULL CHECK(role IN ('admin', 'requester')),
+          created_by INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL,
+          used_at INTEGER, created_at INTEGER NOT NULL
+        );
+        CREATE TABLE proposals (
+          id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+          kind TEXT NOT NULL CHECK(kind IN ('parts', 'follow')),
+          volume_id TEXT NOT NULL, title TEXT NOT NULL, publisher TEXT,
+          status TEXT NOT NULL CHECK(status IN ('pending', 'rejected', 'withdrawn', 'approved', 'dispatching', 'active', 'attention', 'stopped')),
+          created_at INTEGER NOT NULL, decided_at INTEGER, decided_by INTEGER REFERENCES users(id),
+          reason TEXT, last_error TEXT
+        );
+        CREATE INDEX proposals_user_idx ON proposals(user_id, created_at DESC);
+        CREATE INDEX proposals_status_idx ON proposals(status, created_at);
+        CREATE TABLE proposal_parts (
+          proposal_id INTEGER NOT NULL REFERENCES proposals(id), part_number TEXT NOT NULL,
+          issue_id TEXT, dispatch_status TEXT NOT NULL DEFAULT 'pending',
+          PRIMARY KEY(proposal_id, part_number)
+        );
+        CREATE TABLE proposal_events (
+          id INTEGER PRIMARY KEY, proposal_id INTEGER NOT NULL REFERENCES proposals(id),
+          actor_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
+          detail TEXT, at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 7,
+    name: 'managed-ongoing-follows',
+    up() {
+      // A series already in Mylar belongs to its operator. Only a series
+      // Inkwell itself added can be paused when its final follow ends.
+      db.exec(`CREATE TABLE managed_follows (
+        volume_id TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+      )`);
+      db.exec('ALTER TABLE proposals ADD COLUMN stop_requested_at INTEGER');
+    },
+  },
+  {
+    version: 8,
+    name: 'request-permissions-and-policy',
+    up() {
+      // Existing friends keep their ability to request. Admins continue to
+      // inherit every capability from their role, independent of this column.
+      db.exec("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '[\"request\"]'");
+      db.exec('ALTER TABLE users ADD COLUMN request_limit_override INTEGER');
+    },
+  },
+  {
+    version: 9,
+    name: 'future-request-release-ledger',
+    up() {
+      // Mylar's ReleaseDate comes from ComicVine's store date. IssueDate is a
+      // cover date and must never decide whether a future request is eligible.
+      db.exec('ALTER TABLE mylar_parts ADD COLUMN release_date TEXT');
+      db.exec('ALTER TABLE proposals ADD COLUMN future_cutoff_day TEXT');
+      // Existing active follows were already approved under the prior model.
+      // Their decision day is the only honest boundary we have; never treat
+      // their whole historical Mylar issue list as newly requested on upgrade.
+      db.exec("UPDATE proposals SET future_cutoff_day=date(decided_at / 1000, 'unixepoch') WHERE kind='follow' AND status='active' AND decided_at IS NOT NULL");
+      // Claim before handing an issue to Mylar. A restart after the handoff
+      // must leave an uncertain claim alone rather than search it twice.
+      db.exec(`CREATE TABLE future_dispatches (
+        volume_id TEXT NOT NULL, issue_id TEXT NOT NULL, state TEXT NOT NULL,
+        proposal_id INTEGER REFERENCES proposals(id), claimed_at INTEGER NOT NULL,
+        queued_at INTEGER, last_error TEXT,
+        PRIMARY KEY (volume_id, issue_id)
+      )`);
+      db.exec('CREATE INDEX future_dispatches_proposal_idx ON future_dispatches(proposal_id)');
+    },
+  },
 ];
 
 const migrationLockPath = `${file}.migration.lock`;
@@ -314,13 +404,13 @@ const upsertLink = db.prepare(`INSERT INTO catalogue_links (from_kind, from_id, 
 const deleteLinksForRelation = db.prepare(`DELETE FROM catalogue_links
   WHERE from_kind = ? AND from_id = ? AND relation = ? AND to_kind = ?`);
 const selectMylarSeries = db.prepare('SELECT comic_id, name, publisher, year, status, updated_at FROM mylar_series WHERE comic_id = ?');
-const selectMylarParts = db.prepare('SELECT issue_id, number, name, status, updated_at FROM mylar_parts WHERE comic_id = ? ORDER BY CAST(number AS REAL), number');
+const selectMylarParts = db.prepare('SELECT issue_id, number, name, status, release_date, updated_at FROM mylar_parts WHERE comic_id = ? ORDER BY CAST(number AS REAL), number');
 const upsertMylarSeries = db.prepare(`INSERT INTO mylar_series (comic_id, name, publisher, year, status, updated_at)
   VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(comic_id) DO UPDATE SET name=excluded.name,
   publisher=excluded.publisher, year=excluded.year, status=excluded.status, updated_at=excluded.updated_at`);
-const upsertMylarPart = db.prepare(`INSERT INTO mylar_parts (comic_id, issue_id, number, name, status, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(comic_id, issue_id) DO UPDATE SET number=excluded.number,
-  name=excluded.name, status=excluded.status, updated_at=excluded.updated_at`);
+const upsertMylarPart = db.prepare(`INSERT INTO mylar_parts (comic_id, issue_id, number, name, status, release_date, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(comic_id, issue_id) DO UPDATE SET number=excluded.number,
+  name=excluded.name, status=excluded.status, release_date=excluded.release_date, updated_at=excluded.updated_at`);
 const updateMylarPart = db.prepare('UPDATE mylar_parts SET status = ?, updated_at = ? WHERE comic_id = ? AND issue_id = ?');
 const selectEvent = db.prepare('SELECT key FROM events WHERE key = ?');
 const insertEvent = db.prepare('INSERT INTO events (key, kind, title, detail, at, when_local) VALUES (?, ?, ?, ?, ?, ?)');
@@ -716,7 +806,7 @@ export function rememberMylarParts(comicId, data) {
     for (const issue of issues) {
       if (issue?.id == null) continue;
       upsertMylarPart.run(String(comicId), String(issue.id), issue.number == null ? null : String(issue.number),
-        issue.name ?? null, String(issue.status || 'Skipped'), now);
+        issue.name ?? null, String(issue.status || 'Skipped'), issue.releaseDate ?? null, now);
     }
     db.exec('COMMIT');
   } catch (error) {
@@ -730,9 +820,9 @@ export function getMylarParts(comicId) {
   const series = selectMylarSeries.get(String(comicId));
   const parts = selectMylarParts.all(String(comicId)).map((part) => ({
     id: String(part.issue_id), number: String(part.number ?? ''), name: part.name ?? null,
-    status: String(part.status || 'Skipped'), updatedAt: Number(part.updated_at),
+    status: String(part.status || 'Skipped'), releaseDate: part.release_date ?? null, updatedAt: Number(part.updated_at),
   }));
-  return { tracked: Boolean(series), parts, updatedAt: Number(series?.updated_at || 0) };
+  return { tracked: Boolean(series), seriesStatus: series?.status || null, parts, updatedAt: Number(series?.updated_at || 0) };
 }
 
 export function setMylarPartStatus(comicId, issueId, status) {
@@ -962,3 +1052,7 @@ export function close() {
 export function databaseLifecycle() {
   return { file, schemaVersion: migration.version };
 }
+
+// Membership uses the same transaction and migration ledger as the catalogue.
+// It is application-owned data and must survive a cache clear or image replacement.
+export const applicationDb = db;

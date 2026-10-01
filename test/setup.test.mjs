@@ -28,6 +28,7 @@ async function start(configDir, requestedPort = null) {
       MYLAR_URL: 'http://mylar.invalid/api',
       MYLAR_API_KEY: 'test-mylar-key',
       COMICVINE_API_KEY: 'test-comicvine-key',
+      INKWELL_ACCESS_MODE: 'single',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

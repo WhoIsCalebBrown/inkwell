@@ -1,6 +1,6 @@
 {
   "name": "inkwell",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,7 @@
     "capture:metron": "node tools/capture-metron.mjs"
   },
   "dependencies": {
+    "cheerio": "1.2.0",
     "express": "^5.1.0"
   }
 }

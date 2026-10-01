@@ -16,11 +16,20 @@ import {
   readSetting, writeSetting,
 } from './store.js';
 import * as lore from './lore.js';
+import { createMylarSettings } from './mylar-settings.js';
 import { supplement } from './enrich.js';
 import {
   allRailDefinitions, buildDiscoveryCatalogue, buildDiscoveryContext, discoveryVersion,
   resolveRail, selectRails,
 } from './discovery.js';
+import {
+  adminCount, userCount, publicUser, authenticate, newSession, sessionUser, revokeSession,
+  createFirstAdmin, createInvitation, createUser, acceptInvitation, submitProposal, proposalsFor, proposal,
+  changeProposal, markPart, markAttention, changePassword, listUsers, setUserActive,
+  managedFollow, markManagedFollow, markManagedPaused, activeFollows, activePartRequests, requestFollowStop,
+  activeFutureFollows, setFutureCutoff, claimFutureDispatch, finishFutureDispatch, futureDispatches, retryFutureDispatch,
+  can, requestPolicy, setRequestPolicy, setUserPermissions,
+} from './membership.js';
 
 const app = express();
 let shuttingDown = false;
@@ -92,6 +101,14 @@ if (fs.existsSync(envFile)) {
     }
   } catch { /* a local env file is optional */ }
 }
+const requestedAccessMode = process.env.INKWELL_ACCESS_MODE || 'auto';
+if (!['auto', 'single', 'multi'].includes(requestedAccessMode)) throw new Error('INKWELL_ACCESS_MODE must be auto, single or multi.');
+const savedInstallation = readSetting('installation');
+const effectiveAccessMode = requestedAccessMode === 'auto'
+  ? (savedInstallation?.accessMode || (userCount() || readSetting('owner_claimed') ? 'multi' : savedInstallation?.completedAt ? 'single' : 'multi'))
+  : requestedAccessMode;
+const multiUser = effectiveAccessMode === 'multi';
+const accountSetupRequired = () => multiUser && userCount() === 0 && !readSetting('owner_claimed');
 // Express does not trust X-Forwarded-* headers unless this explicit list is
 // configured. Most of Inkwell does not need forwarded headers today, but this
 // keeps a future proxy-aware feature from accidentally trusting every client.
@@ -210,6 +227,15 @@ function mylarConfigValue(field) {
   }
 }
 
+function mylarConfigBoolean(field) {
+  // Mylar writes ConfigObj booleans as True/False. Older installs may use
+  // 1/0; an unknown or unreadable value must still fail the approval gate.
+  const value = mylarConfigValue(field).toLowerCase();
+  if (value === 'true' || value === '1') return true;
+  if (value === 'false' || value === '0') return false;
+  return null;
+}
+
 function canRead(file) {
   try { fs.accessSync(file, fs.constants.R_OK); return true; } catch { return false; }
 }
@@ -217,19 +243,25 @@ function canRead(file) {
 // This deliberately validates configuration shape without making network calls
 // or returning paths/secrets to the browser. Mylar can be temporarily down and
 // Komga is optional; neither condition should stop a safe Inkwell boot.
-function setupStatus() {
+function setupStatus(req = null) {
   const mountedMylarConfig = canRead(configPath);
   const mylarCredential = Boolean(process.env.MYLAR_API_KEY?.trim() || mylarConfigValue('api_key'));
   const comicVineCredential = Boolean(process.env.COMICVINE_API_KEY?.trim() || mylarConfigValue('comicvine_api'));
   const installation = readSetting('installation');
   const configurationReady = comicVineCredential && mylarCredential && Boolean(mylarUrl);
+  const transport = accountSetupRequired() && req ? insecureAccountTransport(req) : null;
   return {
     firstRun: !installation?.completedAt,
     completed: Boolean(installation?.completedAt),
     discovery: { configured: comicVineCredential },
     requests: { configured: mylarCredential, endpoint: Boolean(mylarUrl), endpointValid: Boolean(mylarUrl) },
     mylarConfig: { readable: mountedMylarConfig },
-    authentication: authUser && authPassword ? 'basic' : 'trusted-lan',
+    authentication: multiUser ? 'accounts' : authUser && authPassword ? 'basic' : 'trusted-lan',
+    accessMode: effectiveAccessMode,
+    accountSetupRequired: accountSetupRequired(),
+    accountSetupAllowed: transport ? transport.allowed || transport.needsAcknowledgement : !accountSetupRequired(),
+    needsPrivateHttpAcknowledgement: Boolean(transport?.needsAcknowledgement),
+    accountSetupReason: transport?.reason ?? null,
     ready: configurationReady,
   };
 }
@@ -255,6 +287,7 @@ async function mylar(command, params = {}, { timeoutMs = 120_000 } = {}) {
 // Cached responses remain instant, so this only affects a genuinely new lookup.
 const CV_MIN_INTERVAL_MS = 1_250;
 const CV_COOLDOWN_MS = 60 * 60_000;
+const CV_MAX_WAITING = 40;
 let cvTail = Promise.resolve();
 let cvLastStartedAt = 0;
 let cvQueued = 0;
@@ -345,6 +378,9 @@ function bootstrapDiscoveryIfEmpty() {
 setTimeout(bootstrapDiscoveryIfEmpty, 300).unref?.();
 
 async function cvAcquire() {
+  if (cvQueued >= CV_MAX_WAITING) {
+    throw new Error('ComicVine is busy with other readers. Try again shortly; saved books remain available.');
+  }
   let release;
   const previous = cvTail;
   cvTail = new Promise((resolve) => { release = resolve; });
@@ -616,6 +652,8 @@ async function watchlist() {
 }
 
 const COMPLETED_ISSUE_STATES = new Set(['Archived', 'Downloaded', 'Snatched', 'Wanted']);
+const futureHandoffs = new Set();
+const HANDLED_FUTURE_STATES = new Set(['archived', 'downloaded', 'snatched', 'wanted']);
 
 // Mylar owns the authoritative per-part IDs. ComicVine's catalogue tells us a
 // collection has six entries, but Mylar is the service that knows which of
@@ -623,6 +661,7 @@ const COMPLETED_ISSUE_STATES = new Set(['Archived', 'Downloaded', 'Snatched', 'W
 function shapedMylarParts(local) {
   return {
     tracked: local.tracked,
+    seriesStatus: local.seriesStatus || null,
     parts: local.parts.map((issue) => {
       const status = String(issue.status || 'Skipped');
       return { ...issue, status, requestable: !COMPLETED_ISSUE_STATES.has(status) };
@@ -656,7 +695,43 @@ async function mylarParts(comicId, { refresh = false } = {}) {
   if (local.tracked && local.parts.length && !refresh) return shapedMylarParts(local);
   const data = await mylar('getComic', { id: comicId });
   rememberMylarParts(comicId, data);
-  return shapedMylarParts(getMylarParts(comicId));
+  const shaped = shapedMylarParts(getMylarParts(comicId));
+  const series = Array.isArray(data.comic) ? data.comic[0] : data.comic;
+  shaped.tracked = Boolean(series?.id);
+  shaped.seriesStatus = series?.status || null;
+  const freshIds = new Set((Array.isArray(data.issues) ? data.issues : []).map((issue) => String(issue.id)));
+  shaped.parts = shaped.parts.filter((part) => freshIds.has(part.id));
+  return shaped;
+}
+
+const utcDay = (at = Date.now()) => new Date(at).toISOString().slice(0, 10);
+function validReleaseDay(value) {
+  const day = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day.startsWith('0000')) return null;
+  const parsed = new Date(`${day}T00:00:00.000Z`);
+  return Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== day ? null : day;
+}
+
+function futureCapability() {
+  const all = mylarConfigBoolean('autowant_all');
+  const upcoming = mylarConfigBoolean('autowant_upcoming');
+  if (all === false && upcoming === false) return { available: true, reason: null };
+  return { available: false, reason: 'An admin needs to turn off Mylar’s automatic back-catalogue and upcoming downloads before approving a future-release request.' };
+}
+
+function requestCapabilities({ tracked = null } = {}) {
+  const future = futureCapability();
+  const all = mylarConfigBoolean('autowant_all');
+  const upcoming = mylarConfigBoolean('autowant_upcoming');
+  const selectedSafe = tracked === true ? true : all === false && upcoming === false;
+  return {
+    // Existing series belong to Mylar's operator. A new series needs both
+    // switches off before addComic, because either can queue more than the
+    // explicit selection.
+    selected: { available: selectedSafe,
+      reason: selectedSafe ? null : 'An admin needs to turn off Mylar’s automatic back-catalogue and upcoming downloads before approving a request for a new series.' },
+    future,
+  };
 }
 
 // Komga is optional. Without it the shelf still renders — it just cannot tell
@@ -861,15 +936,444 @@ app.use((req, res, next) => {
 // Until a person has deliberately finished setup, do not let an accidentally
 // exposed fresh server make changes in Mylar or clear local state. Read-only
 // endpoints remain available so the setup screen and container diagnostics can
-// explain what is missing. This is not an account system: v1 is explicitly a
-// shared trusted-LAN or shared-Basic installation.
+// explain what is missing; account creation is the only unauthenticated setup write.
 app.use((req, res, next) => {
-  if (!WRITES.has(req.method) || req.path === '/api/setup/complete') return next();
+  if (!WRITES.has(req.method) || ['/api/setup/complete', '/api/setup/admin'].includes(req.path)
+      || (multiUser && ['/api/auth/login', '/api/auth/invite/accept', '/api/auth/logout'].includes(req.path))) return next();
   if (setupStatus().completed) return next();
   return res.status(428).json({
     error: 'Finish Inkwell setup before making changes.',
     code: 'setup_required',
   });
+});
+// In multi-user mode every API route needs an identity. A short explicit
+// requester allowlist keeps new Mylar controls admin-only by default.
+const loginFailures = new Map();
+const ownerAttempts = new Map();
+const requesterRead = [
+  /^\/api\/(?:search|threads|threads\/browse|threads\/seeded\/[^/]+|publishers|formats|decades|lines)\/?$/,
+  /^\/api\/(?:thread|publisher|decade)\//,
+  /^\/api\/discover(?:\/|$)/,
+  /^\/api\/volume\/\d+(?:\/issues|\/issue\/\d+\/cover)?$/,
+  /^\/api\/cover\/\d+$/,
+  /^\/api\/request\/\d+\/options$/,
+  /^\/api\/request-capabilities$/,
+];
+const sessionCookie = (req) => {
+  const raw = String(req.headers.cookie || '').split(';').map((part) => part.trim());
+  return raw.find((part) => part.startsWith('inkwell_session='))?.slice('inkwell_session='.length) || '';
+};
+const localConnection = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+function privateDirectConnection(req) {
+  const address = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  const forwarded = Boolean(req.headers['x-forwarded-for'] || req.headers['x-forwarded-proto'] || req.headers.forwarded);
+  if (forwarded) return false;
+  if (address === '::1' || address.startsWith('fc') || address.startsWith('fd')) return true;
+  if (/^127\./.test(address) || /^10\./.test(address) || /^192\.168\./.test(address)) return true;
+  const match = address.match(/^172\.(\d{1,3})\./);
+  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+}
+function insecureAccountTransport(req) {
+  if (req.secure) return { allowed: true, needsAcknowledgement: false, reason: null };
+  if (localConnection(req) && privateDirectConnection(req)) return { allowed: true, needsAcknowledgement: false, reason: null };
+  if (!privateDirectConnection(req)) return { allowed: false, needsAcknowledgement: false, reason: 'Account setup requires HTTPS outside a direct private network.' };
+  if (process.env.INKWELL_ALLOW_HTTP === '1' || readSetting('installation')?.allowPrivateHttp) {
+    return { allowed: true, needsAcknowledgement: false, reason: null };
+  }
+  return { allowed: false, needsAcknowledgement: true, reason: 'Confirm this direct private-network connection before entering a password.' };
+}
+function setSessionCookie(req, res, value, maxAge) {
+  const secure = req.secure;
+  res.setHeader('Set-Cookie', `inkwell_session=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(maxAge / 1000)}${secure ? '; Secure' : ''}`);
+}
+app.use((req, res, next) => {
+  if (!multiUser || !req.path.startsWith('/api/')) return next();
+  res.set('Cache-Control', 'private, no-store');
+  if (['/api/ready', '/api/live', '/api/setup', '/api/setup/admin', '/api/auth/login', '/api/auth/invite/accept'].includes(req.path)) return next();
+  req.member = sessionUser(sessionCookie(req));
+  if (!req.member) return res.status(401).json({ error: 'Sign in to Inkwell.', code: 'login_required' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account access requires HTTPS outside a direct private network.' });
+  if (req.member.role === 'admin') return next();
+  if (['/api/me', '/api/auth/logout', '/api/auth/password', '/api/proposals'].includes(req.path)) return next();
+  if (can(req.member, 'manage_users') && (req.path === '/api/users' || req.path === '/api/invitations'
+    || /^\/api\/users\/\d+\/(?:status|permissions)$/.test(req.path))) return next();
+  if (/^\/api\/proposals\/\d+(?:\/(?:withdraw|stop-request))?$/.test(req.path)) return next();
+  if (can(req.member, 'manage_requests') && /^\/api\/proposals\/\d+\/(?:approve|reject|retry|stop|future\/\d+\/retry)$/.test(req.path)) return next();
+  if (req.method === 'GET' && requesterRead.some((pattern) => pattern.test(req.path))) return next();
+  return res.status(403).json({ error: 'Only an administrator can use that control.' });
+});
+
+app.get('/api/me', (req, res) => res.json({ user: multiUser ? publicUser(req.member) : null, accessMode: multiUser ? 'multi' : 'single' }));
+app.post('/api/auth/login', async (req, res, next) => {
+  if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account sign-in requires HTTPS.' });
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (loginFailures.get(key) || []).filter((at) => Date.now() - at < 5 * 60_000);
+  if (recent.length >= 8) return res.status(429).json({ error: 'Too many sign-in attempts. Try again later.' });
+  try {
+    const user = await authenticate(req.body?.username, req.body?.password);
+    if (!user) {
+      loginFailures.set(key, [...recent, Date.now()]);
+      return res.status(401).json({ error: 'Incorrect username or password.' });
+    }
+    loginFailures.delete(key);
+    const session = newSession(user.id);
+    setSessionCookie(req, res, session.token, session.maxAge);
+    res.json({ user: publicUser(user) });
+  } catch (error) { next(error); }
+});
+app.post('/api/setup/admin', async (req, res) => {
+  if (!multiUser) return res.status(409).json({ error: 'Account setup is disabled by the selected access mode.' });
+  if (!accountSetupRequired()) return res.status(409).json({ error: 'This installation already has an account.' });
+  const transport = insecureAccountTransport(req);
+  const acknowledge = req.body?.acknowledgePrivateHttp === true;
+  const allowPrivateHttp = transport.needsAcknowledgement && acknowledge && privateDirectConnection(req);
+  if (!transport.allowed && !allowPrivateHttp) {
+    return res.status(403).json({ error: transport.reason || 'Account setup requires HTTPS.' });
+  }
+  // Count before hashing so concurrent unauthenticated attempts cannot all
+  // enter scrypt before the first failure reaches the limiter.
+  const now = Date.now();
+  for (const [address, attempts] of ownerAttempts) {
+    if (!attempts.some((at) => now - at < 5 * 60_000)) ownerAttempts.delete(address);
+  }
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (ownerAttempts.get(key) || []).filter((at) => now - at < 5 * 60_000);
+  if (recent.length >= 8 || (!ownerAttempts.has(key) && ownerAttempts.size >= 1024)) {
+    return res.status(429).json({ error: 'Too many setup attempts. Try again later.' });
+  }
+  ownerAttempts.set(key, [...recent, now]);
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((field) => !['username', 'displayName', 'password', 'acknowledgePrivateHttp'].includes(field))
+      || typeof body.username !== 'string' || typeof body.password !== 'string'
+      || (body.displayName !== undefined && typeof body.displayName !== 'string')
+      || (body.acknowledgePrivateHttp !== undefined && typeof body.acknowledgePrivateHttp !== 'boolean')) {
+    return res.status(400).json({ error: 'Enter a username and password using the setup form.' });
+  }
+  try {
+    const admin = await createFirstAdmin(body.username, body.displayName, body.password, { allowPrivateHttp });
+    const session = newSession(admin.id);
+    setSessionCookie(req, res, session.token, session.maxAge);
+    res.status(201).json({ user: publicUser(admin), setup: setupStatus(req) });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/auth/logout', (req, res) => {
+  if (multiUser) revokeSession(sessionCookie(req));
+  setSessionCookie(req, res, '', 0);
+  res.json({ ok: true });
+});
+app.post('/api/auth/password', async (req, res) => {
+  if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Password changes require HTTPS.' });
+  try {
+    await changePassword(req.member.id, req.body?.currentPassword, req.body?.newPassword);
+    setSessionCookie(req, res, '', 0);
+    res.json({ ok: true, message: 'Password changed. Sign in again.' });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/auth/invite/accept', async (req, res) => {
+  if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  if (!insecureAccountTransport(req).allowed) {
+    return res.status(403).json({ error: 'Account creation requires HTTPS.' });
+  }
+  try {
+    await acceptInvitation(req.body?.token, req.body?.username, req.body?.displayName, req.body?.password);
+    res.status(201).json({ ok: true });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/invitations', (req, res) => {
+  if (!multiUser || !can(req.member, 'manage_users')) return res.status(403).json({ error: 'Manage users permission required.' });
+  try { res.status(201).json(createInvitation(req.member.id, req.body?.role || 'requester')); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.get('/api/users', (req, res) => {
+  if (!multiUser || !can(req.member, 'manage_users')) return res.status(403).json({ error: 'Manage users permission required.' });
+  res.json({ items: listUsers() });
+});
+app.post('/api/users', async (req, res) => {
+  if (!multiUser || !can(req.member, 'manage_users')) return res.status(403).json({ error: 'Manage users permission required.' });
+  try {
+    const user = await createUser(req.member.id, req.body?.username, req.body?.displayName,
+      req.body?.password, req.body?.permissions, req.body?.requestLimitOverride ?? null);
+    res.status(201).json({ user });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/users/:id/status', (req, res) => {
+  if (!multiUser || !can(req.member, 'manage_users')) return res.status(403).json({ error: 'Manage users permission required.' });
+  if (typeof req.body?.active !== 'boolean') return res.status(400).json({ error: 'Choose active or inactive.' });
+  try { setUserActive(req.params.id, req.member.id, req.body.active); res.json({ ok: true }); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/users/:id/permissions', (req, res) => {
+  if (!multiUser || !can(req.member, 'manage_users')) return res.status(403).json({ error: 'Manage users permission required.' });
+  try { res.json(setUserPermissions(req.params.id, req.member.id, req.body?.permissions, req.body?.requestLimitOverride)); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.get('/api/request-policy', (req, res) => {
+  if (!multiUser || req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  res.json(requestPolicy());
+});
+app.put('/api/request-policy', (req, res) => {
+  if (!multiUser || req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  try { res.json(setRequestPolicy(req.body)); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+app.use('/api/proposals', (_req, res, next) => multiUser ? next() : res.status(404).json({ error: 'Accounts are not enabled.' }));
+
+app.get('/api/request-capabilities', (req, res) => {
+  if (!multiUser || !can(req.member, 'request')) return res.status(403).json({ error: 'Request permission required.' });
+  res.json(requestCapabilities());
+});
+
+function visibleProposal(row, user) {
+  if (!row) return null;
+  const known = getMylarParts(row.volume_id).parts;
+  const visible = { ...row, parts: row.parts.map((part) => ({
+    ...part,
+    mylarStatus: part.issueId ? known.find((item) => item.id === part.issueId)?.status || null : null,
+  })) };
+  if (row.kind === 'follow') {
+    const ledger = futureDispatches(row.volume_id);
+    const issues = ledger.map((entry) => ({ ...entry, part: known.find((part) => part.id === entry.issue_id) }))
+      .filter((entry) => entry.part && validReleaseDay(entry.part.releaseDate) > row.future_cutoff_day)
+      .map((entry) => ({ number: entry.part.number, name: entry.part.name, status: entry.part.status,
+        releaseDate: entry.part.releaseDate, dispatchStatus: entry.state,
+        ...(can(user, 'manage_requests') ? { issueId: entry.issue_id } : {}) }));
+    const unsafe = !futureCapability().available;
+    const seriesStatus = getMylarParts(row.volume_id).seriesStatus;
+    const paused = ['paused', 'loading'].includes(String(seriesStatus).toLowerCase());
+    const uncertain = issues.some((issue) => issue.dispatchStatus === 'sending');
+    const reason = unsafe ? 'Monitoring is waiting for an admin to finish request setup.'
+      : paused ? 'Monitoring is waiting for Mylar to resume this series.'
+      : uncertain ? 'A release needs an admin to check whether Mylar received it.' : null;
+    visible.future = { enabled: ['pending', 'approved', 'dispatching', 'active', 'attention'].includes(row.status),
+      status: row.status === 'active' ? reason ? 'attention' : 'monitoring' : row.status,
+      cutoffDay: row.future_cutoff_day || null, pausedReason: row.status === 'active' ? reason : null, issues };
+    visible.recentIssues = issues.slice(0, 8);
+  }
+  if (!can(user, 'manage_requests')) {
+    delete visible.last_error;
+    delete visible.decided_by;
+    delete visible.decided_by_name;
+  }
+  return visible;
+}
+
+app.get('/api/proposals', async (req, res) => {
+  if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  const rows = proposalsFor(req.member, req.query.pending === '1');
+  if (req.query.refresh === '1') {
+    // Mylar remains the source of truth. Refresh only titles this reader owns,
+    // with a short shared memo so reopening the page cannot hammer its API.
+    const ids = [...new Set(rows.filter((row) => ['active', 'attention'].includes(row.status))
+      .map((row) => row.volume_id))].slice(0, 20);
+    for (const id of ids) {
+      await withinreason(memo(`proposal:refresh:${id}`, 60_000,
+        () => mylarParts(id, { refresh: true })), 2_500, null).catch(() => null);
+    }
+  }
+  res.json({ items: rows.map((row) => visibleProposal(row, req.member)) });
+});
+app.get('/api/proposals/:id', (req, res) => {
+  const row = proposal(req.params.id);
+  if (!row || (!can(req.member, 'manage_requests') && row.user_id !== req.member.id)) return res.status(404).json({ error: 'Request not found.' });
+  res.json(visibleProposal(row, req.member));
+});
+app.post('/api/proposals', async (req, res) => {
+  if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  const volumeId = String(req.body?.volumeId || '');
+  const volume = getVolume(volumeId);
+  if (!volume) return res.status(404).json({ error: 'Open this book before requesting it.' });
+  const kind = req.body?.kind;
+  try {
+    const row = submitProposal(req.member.id, {
+      kind, volumeId, title: volume.name, publisher: volume.publisher?.name || null,
+      partNumbers: Array.isArray(req.body?.partNumbers) ? req.body.partNumbers : [],
+    });
+    if (req.member.role === 'admin' || can(req.member, 'auto_approve') || requestPolicy().autoApprove) {
+      const gate = await approvalGate(row);
+      if (!gate) {
+        const sending = changeProposal(changeProposal(row.id, 'pending', 'approved', req.member.id).id,
+          'approved', 'dispatching', req.member.id);
+        try { await dispatchProposal(sending); }
+        catch (error) { markAttention(row.id, error.message); }
+      }
+    }
+    res.status(201).json(visibleProposal(proposal(row.id), req.member));
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/proposals/:id/withdraw', (req, res) => {
+  const row = proposal(req.params.id);
+  if (!row || row.user_id !== req.member.id) return res.status(404).json({ error: 'Request not found.' });
+  try { res.json(visibleProposal(changeProposal(row.id, 'pending', 'withdrawn', req.member.id), req.member)); }
+  catch (error) { res.status(409).json({ error: error.message }); }
+});
+app.post('/api/proposals/:id/stop-request', (req, res) => {
+  const row = proposal(req.params.id);
+  if (!row || row.user_id !== req.member.id) return res.status(404).json({ error: 'Follow not found.' });
+  try { res.json(visibleProposal(requestFollowStop(row.id, req.member.id), req.member)); }
+  catch (error) { res.status(409).json({ error: error.message }); }
+});
+
+async function dispatchProposal(row) {
+  const id = row.volume_id;
+  if (row.kind === 'follow') {
+    const watched = await watchlist();
+    const existing = watched.find((item) => item.id === id);
+    if (!existing) {
+      await mylar('addComic', { id });
+      markManagedFollow(id);
+      cache.delete('watchlist');
+    } else if (String(existing.status).toLowerCase() === 'paused') {
+      if (!managedFollow(id)?.paused) throw new Error('This series is paused in Mylar. An admin must resume it there first.');
+      await mylar('resumeComic', { id });
+      markManagedPaused(id, false);
+      cache.delete('watchlist');
+    }
+    // A future follow may also include the volumes already visible in the
+    // picker. Mylar imports those after addComic; queue only the explicit
+    // selection and let Inkwell's monitor handle releases after the cutoff.
+    if (row.parts.length) {
+      let collection = await mylarParts(id, { refresh: true });
+      for (let attempt = 0; (!collection.tracked || !collection.parts.length) && attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        collection = await mylarParts(id, { refresh: true });
+      }
+      await dispatchSelectedParts(row, collection);
+    }
+    setFutureCutoff(row.id, utcDay(row.decided_at));
+    changeProposal(row.id, 'dispatching', 'active', row.decided_by);
+    return;
+  }
+  let collection = await mylarParts(id, { refresh: true });
+  if (!collection.tracked) {
+    await mylar('addComic', { id });
+    cache.delete('watchlist');
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      collection = await mylarParts(id, { refresh: true });
+      if (collection.tracked && collection.parts.length) break;
+    }
+  }
+  await dispatchSelectedParts(row, collection);
+  changeProposal(row.id, 'dispatching', 'active', row.decided_by);
+}
+
+async function dispatchSelectedParts(row, collection) {
+  const id = row.volume_id;
+  if (!collection.tracked || !collection.parts.length) throw new Error('Mylar has not imported the issue list yet.');
+  const byNumber = new Map(collection.parts.map((part) => [String(part.number).trim(), part]));
+  if (row.parts.some((part) => !byNumber.has(part.number))) throw new Error('Mylar has not exposed every selected issue yet.');
+  for (const selected of row.parts) {
+    const part = byNumber.get(selected.number);
+    if (selected.dispatchStatus === 'queued' || !part.requestable) {
+      markPart(row.id, selected.number, part.id, 'already-handled');
+      continue;
+    }
+    const result = await queueMylarIssue(id, part.id);
+    markPart(row.id, selected.number, part.id, result.deferred ? 'handed-off' : 'queued');
+  }
+}
+
+async function approvalGate(row) {
+  if (row.kind === 'parts') {
+    try {
+      const watched = await watchlist();
+      if (!watched.some((item) => item.id === row.volume_id)
+        && (mylarConfigBoolean('autowant_all') !== false || mylarConfigBoolean('autowant_upcoming') !== false)) {
+        return { status: 409, error: 'Mount Mylar config.ini and set autowant_all=0 and autowant_upcoming=0 before approving a new series. Otherwise Mylar may request its back catalogue or future releases beyond this request.' };
+      }
+    } catch { return { status: 502, error: 'Could not check Mylar before approval.' }; }
+  }
+  if (row.kind === 'follow') {
+    // Inkwell owns future dispatch. Mylar's global switches must both be off:
+    // its own upcoming worker otherwise races the cutoff and can queue work
+    // for every active series, not only this approved follow.
+    const all = mylarConfigBoolean('autowant_all');
+    const upcoming = mylarConfigBoolean('autowant_upcoming');
+    if (all !== false || upcoming !== false) {
+      return { status: 409, error: 'For future-release requests, mount Mylar config.ini and set autowant_all=0 and autowant_upcoming=0 first. Inkwell will queue only releases approved here.' };
+    }
+  }
+  return null;
+}
+
+app.post('/api/proposals/:id/approve', async (req, res) => {
+  if (!can(req.member, 'manage_requests')) return res.status(403).json({ error: 'Manage requests permission required.' });
+  const row = proposal(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Request not found.' });
+  const gate = await approvalGate(row);
+  if (gate) return res.status(gate.status).json({ error: gate.error });
+  try {
+    const approved = changeProposal(row.id, 'pending', 'approved', req.member.id);
+    const sending = changeProposal(row.id, 'approved', 'dispatching', req.member.id);
+    try { await dispatchProposal(sending); }
+    catch (error) { markAttention(row.id, error.message); }
+    res.json(visibleProposal(proposal(approved.id), req.member));
+  } catch (error) { res.status(409).json({ error: error.message }); }
+});
+app.post('/api/proposals/:id/reject', (req, res) => {
+  if (!can(req.member, 'manage_requests')) return res.status(403).json({ error: 'Manage requests permission required.' });
+  const row = proposal(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Request not found.' });
+  try { res.json(visibleProposal(changeProposal(row.id, 'pending', 'rejected', req.member.id, String(req.body?.reason || '').slice(0, 400)), req.member)); }
+  catch (error) { res.status(409).json({ error: error.message }); }
+});
+app.post('/api/proposals/:id/retry', async (req, res) => {
+  if (!can(req.member, 'manage_requests')) return res.status(403).json({ error: 'Manage requests permission required.' });
+  const row = proposal(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Request not found.' });
+  const gate = await approvalGate(row);
+  if (gate) return res.status(gate.status).json({ error: gate.error });
+  try {
+    const sending = changeProposal(row.id, 'attention', 'dispatching', req.member.id);
+    try { await dispatchProposal(sending); }
+    catch (error) { markAttention(row.id, error.message); }
+    res.json(visibleProposal(proposal(row.id), req.member));
+  } catch (error) { res.status(409).json({ error: error.message }); }
+});
+app.post('/api/proposals/:id/future/:issueId/retry', async (req, res) => {
+  if (!can(req.member, 'manage_requests')) return res.status(403).json({ error: 'Manage requests permission required.' });
+  const row = proposal(req.params.id);
+  if (!row || row.kind !== 'follow' || row.status !== 'active') return res.status(409).json({ error: 'An active approved follow is required.' });
+  const gate = await approvalGate(row);
+  if (gate) return res.status(gate.status).json({ error: gate.error });
+  const previous = futureDispatches(row.volume_id).find((entry) => entry.issue_id === String(req.params.issueId));
+  if (previous?.state !== 'sending') return res.status(409).json({ error: 'This release does not need a retry.' });
+  try {
+    const collection = await mylarParts(row.volume_id, { refresh: true });
+    const part = collection.parts.find((part) => part.id === String(req.params.issueId));
+    const releaseDay = validReleaseDay(part?.releaseDate);
+    if (!part || !releaseDay || releaseDay <= row.future_cutoff_day || releaseDay > utcDay()
+      || proposal(row.id)?.status !== 'active' || ['paused', 'loading'].includes(String(collection.seriesStatus).toLowerCase())) {
+      return res.status(409).json({ error: 'This release is outside the active follow’s scope or the series is paused.' });
+    }
+    if (HANDLED_FUTURE_STATES.has(String(part.status).toLowerCase())) {
+      finishFutureDispatch(row.volume_id, part.id, 'handled');
+    } else {
+      if (!futureCapability().available) return res.status(409).json({ error: 'Request configuration changed. Refresh and try again.' });
+      if (futureHandoffs.has(`${row.volume_id}/${part.id}`)
+        || !retryFutureDispatch(row.volume_id, part.id, previous.claimed_at)) return res.status(409).json({ error: 'This release has already changed. Refresh and try again.' });
+      if (!claimFutureDispatch(row.volume_id, part.id, row.id)) return res.status(409).json({ error: 'This release has already changed.' });
+      futureHandoffs.add(`${row.volume_id}/${part.id}`);
+      try { await queueMylarIssue(row.volume_id, part.id); finishFutureDispatch(row.volume_id, part.id, 'queued'); }
+      catch { finishFutureDispatch(row.volume_id, part.id, 'sending', 'Mylar did not confirm the handoff.'); }
+      finally { futureHandoffs.delete(`${row.volume_id}/${part.id}`); }
+    }
+    res.json(visibleProposal(proposal(row.id), req.member));
+  } catch { res.status(502).json({ error: 'Could not check this release with Mylar.' }); }
+});
+app.post('/api/proposals/:id/stop', async (req, res) => {
+  if (!can(req.member, 'manage_requests')) return res.status(403).json({ error: 'Manage requests permission required.' });
+  const row = proposal(req.params.id);
+  if (!row || row.kind !== 'follow') return res.status(404).json({ error: 'Follow not found.' });
+  if (row.status !== 'active') return res.status(409).json({ error: 'This follow is not active.' });
+  try {
+    const stopped = changeProposal(row.id, 'active', 'stopped', req.member.id);
+    res.json({ ...visibleProposal(stopped, req.member), message: 'Follow stopped. Inkwell will not queue later releases; existing Mylar requests stay as they are.' });
+  } catch (error) { res.status(409).json({ error: error.message }); }
 });
 // Container health must answer without reaching Mylar or Komga. Those
 // providers are intentionally diagnosed by /api/health, but a slow optional
@@ -879,9 +1383,10 @@ app.get('/api/ready', (_req, res) => {
   return res.json({ ok: true, database: databaseLifecycle().schemaVersion });
 });
 app.get('/api/live', (_req, res) => res.json({ ok: !shuttingDown }));
-app.get('/api/setup', (_req, res) => res.json({ ...setupStatus(), database: databaseLifecycle().schemaVersion }));
+app.get('/api/setup', (req, res) => res.json({ ...setupStatus(req), database: databaseLifecycle().schemaVersion }));
 app.post('/api/setup/complete', (req, res) => {
-  const setup = setupStatus();
+  if (multiUser && req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  const setup = setupStatus(req);
   if (!setup.ready) {
     return res.status(422).json({
       error: 'Configure a valid Mylar API URL plus Mylar and ComicVine credentials before finishing setup.',
@@ -896,6 +1401,7 @@ app.post('/api/setup/complete', (req, res) => {
     });
   }
   const installation = writeSetting('installation', {
+    ...(readSetting('installation') || {}),
     completedAt: new Date().toISOString(),
     access: setup.authentication,
   });
@@ -923,7 +1429,7 @@ const withinreason = (work, ms, fallback) => Promise.race([
   new Promise((resolve) => { setTimeout(() => resolve(fallback), ms).unref?.(); }),
 ]);
 
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', async (req, res) => {
   try {
     const watched = await withinreason(watchlist().then((list) => list.length), 2_500, null);
     res.json({
@@ -937,6 +1443,9 @@ app.get('/api/health', async (_req, res) => {
       cache: cacheStats(),
       enrichment: enrichmentStats(),
       setup: setupStatus(),
+      ...(multiUser && req.member?.role === 'admin' ? { requestSafety: {
+        autoWantAll: mylarConfigBoolean('autowant_all'), autoWantUpcoming: mylarConfigBoolean('autowant_upcoming'),
+      } } : {}),
     });
   }
   catch (error) { res.status(503).json({ ok: false, error: error.message }); }
@@ -1076,6 +1585,38 @@ function wantedSince() {
 // searched for. Inkwell could not tell the difference until now.
 const mylarWebUrl = httpUrl(process.env.MYLAR_WEB_URL || mylarUrl).replace(/\/api\/?$/, '');
 
+const mylarSettings = mylarWebUrl ? createMylarSettings({
+  baseUrl: mylarWebUrl,
+  readConfig: () => fs.readFileSync(configPath, 'utf8'),
+}) : null;
+app.get('/api/mylar/settings', async (req, res) => {
+  if (multiUser && req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  if (!mylarSettings) return res.json({ editable: false, reason: 'Mylar web connection is not configured.' });
+  res.json(await mylarSettings.snapshot());
+});
+app.put('/api/mylar/settings', async (req, res) => {
+  if (multiUser && req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  if (!mylarSettings) return res.status(503).json({ error: 'Mylar web connection is not configured.' });
+  try {
+    // Keep a private restore point before Mylar saves its configuration. This
+    // file contains credentials and must never be an asset or API response.
+    if (canRead(configPath)) {
+      const directory = path.join(configDir, 'backups');
+      await fsp.mkdir(directory, { recursive: true });
+      await fsp.writeFile(path.join(directory, `mylar-before-settings-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.ini`),
+        await fsp.readFile(configPath), { mode: 0o600, flag: 'wx' });
+    }
+    const saved = await mylarSettings.save(req.body);
+    cache.delete('watchlist');
+    res.json(saved);
+  } catch (error) {
+    const safe = ['Choose valid automatic-download settings.', 'Mylar settings save is already running.',
+      'Mylar settings changed. Reload before saving.', 'Mylar settings are unavailable.'];
+    res.status(error.message?.includes('changed') ? 409 : 400).json({ error:
+      safe.includes(error.message) ? error.message : 'Mylar settings could not be saved. Refresh and try again.' });
+  }
+});
+
 async function mylarWeb(pathname, params = {}) {
   if (!mylarWebUrl) throw new Error('Mylar web URL is not configured.');
   const query = new URLSearchParams(params);
@@ -1182,7 +1723,10 @@ app.get('/api/downloads', async (_req, res, next) => {
 // queues, and never touches ComicVine.
 const NOTIFY_URL = (process.env.INKWELL_NOTIFY_URL || '').trim();
 const NOTIFY_FORMAT = (process.env.INKWELL_NOTIFY_FORMAT || 'auto').trim().toLowerCase();
-const WATCH_INTERVAL_MS = 5 * 60_000;
+const watchIntervalOverride = Number(process.env.INKWELL_WATCH_INTERVAL_MS);
+const WATCH_INTERVAL_MS = Number.isFinite(watchIntervalOverride) && watchIntervalOverride > 0
+  ? Math.max(100, watchIntervalOverride) : 5 * 60_000;
+const WATCH_INITIAL_DELAY_MS = Math.max(0, Number(process.env.INKWELL_WATCH_INITIAL_DELAY_MS) || 20_000);
 // One warning per stall, not one every five minutes for a day.
 const STALL_QUIET_MS = 6 * 60 * 60_000;
 const STALL_AFTER_MS = 3 * 60 * 60_000;
@@ -1249,6 +1793,53 @@ function arrivals() {
 
 let watching = false;
 
+async function watchFutureFollows() {
+  // The configuration can change while the service is running. Refuse every
+  // pass before touching an issue, rather than assuming the approval-time
+  // check remains true indefinitely.
+  if (!futureCapability().available) return;
+  const follows = activeFutureFollows();
+  const byVolume = new Map();
+  for (const follow of follows) {
+    const list = byVolume.get(follow.volume_id) || [];
+    list.push(follow);
+    byVolume.set(follow.volume_id, list);
+  }
+  for (const [volumeId, volumeFollows] of byVolume) {
+    let collection;
+    try { collection = await mylarParts(volumeId, { refresh: true }); }
+    catch (error) { console.warn(`Future follow refresh failed for ${volumeId}: ${error.message}`); continue; }
+    if (!collection.tracked || ['paused', 'loading'].includes(String(collection.seriesStatus).toLowerCase())) continue;
+    for (const part of collection.parts) {
+      const releaseDay = validReleaseDay(part.releaseDate);
+      if (!releaseDay || releaseDay > utcDay()) continue;
+      const eligible = volumeFollows.find((follow) => releaseDay > follow.future_cutoff_day
+        && proposal(follow.id)?.status === 'active');
+      if (!eligible) continue;
+      const state = String(part.status || '').toLowerCase();
+      if (!futureCapability().available) return;
+      if (HANDLED_FUTURE_STATES.has(state)) {
+        claimFutureDispatch(volumeId, part.id, eligible.id);
+        finishFutureDispatch(volumeId, part.id, 'handled');
+        continue;
+      }
+      // Recheck immediately before the write. A config edit during a slow
+      // getComic response must stop the handoff, and the durable `sending`
+      // marker means an interrupted handoff is never guessed safe to repeat.
+      if (!claimFutureDispatch(volumeId, part.id, eligible.id)) continue;
+      futureHandoffs.add(`${volumeId}/${part.id}`);
+      try {
+        const result = await queueMylarIssue(volumeId, part.id);
+        finishFutureDispatch(volumeId, part.id, 'queued');
+        markPart(eligible.id, part.number, part.id, result.deferred ? 'handed-off' : 'queued');
+      } catch (error) {
+        finishFutureDispatch(volumeId, part.id, 'sending', error.message);
+        console.warn(`Future follow handoff failed for ${volumeId}/${part.id}: ${error.message}`);
+      } finally { futureHandoffs.delete(`${volumeId}/${part.id}`); }
+    }
+  }
+}
+
 async function watchForEvents() {
   if (watching) return;
   watching = true;
@@ -1289,6 +1880,7 @@ async function watchForEvents() {
         });
       }
     }
+    await watchFutureFollows();
   } catch (error) {
     console.warn(`Watcher pass failed: ${error.message}`);
   } finally {
@@ -1300,7 +1892,7 @@ const eventWatchTimer = setInterval(() => { watchForEvents(); }, WATCH_INTERVAL_
 eventWatchTimer.unref();
 // Not at boot: let the server start listening first, and give Mylar a moment
 // if both containers came up together.
-setTimeout(() => { watchForEvents(); }, 20_000).unref?.();
+setTimeout(() => { watchForEvents(); }, WATCH_INITIAL_DELAY_MS).unref?.();
 
 app.get('/api/events', (_req, res) => {
   res.json({ items: listEvents(10), pushing: Boolean(NOTIFY_URL) });
@@ -2694,7 +3286,7 @@ const STARTER_PATHS = [
 ];
 
 app.get('/api/discover/paths', async (_req, res) => {
-  const library = await watchlist().catch(() => []);
+  const library = multiUser && _req.member?.role === 'requester' ? [] : await watchlist().catch(() => []);
   const watchedIds = new Set(library.map((item) => item.id));
   res.json({ paths: STARTER_PATHS.map((path) => {
     const seen = new Set();
@@ -2799,7 +3391,7 @@ function discoveryIds(value, limit = 160) {
 async function discoveryState(req) {
   // A missing Mylar must not turn a local metadata page into an error. It only
   // removes the personal layer; general rails remain fully useful offline.
-  const library = await watchlist().catch(() => []);
+  const library = multiUser && req.member?.role === 'requester' ? [] : await watchlist().catch(() => []);
   // A tracked Mylar series is explicit reader intent, so it is eligible for
   // the same gentle detail enrichment as a title they opened or requested in
   // Inkwell. This is not a catalogue crawl: the queue is deduplicated and
@@ -2955,6 +3547,11 @@ app.get('/api/volume/:id', async (req, res, next) => {
       characters: related(shaped.characters.slice(0, 3), 'character'),
     };
     // ComicVine stays authoritative for identity; a supplement only fills gaps.
+    if (multiUser && req.member?.role === 'requester') {
+      // Availability is useful to a friend; Komga's global library URL and
+      // reading counts are not part of their personal request history.
+      shaped.owned = shaped.owned ? { available: true } : null;
+    }
     res.json(supplement(shaped, await supplementsFor(shaped)));
   } catch (error) { next(error); }
 });
@@ -2971,10 +3568,10 @@ function requestId(req, res) {
 // issue metadata does not change, and the v2 key deliberately refreshes older
 // title-only entries without making an installation migration necessary.
 async function volumeIssues(volumeId) {
-  return cached(`volume:${volumeId}:issues:v2`, 30 * 24 * 60 * 60_000, async () => {
+  return cached(`volume:${volumeId}:issues:v3`, 30 * 24 * 60 * 60_000, async () => {
     const rows = await comicVine('issues', {
       filter: `volume:${volumeId}`,
-      field_list: 'id,name,issue_number,description,image,resource_type',
+      field_list: 'id,name,issue_number,description,image,store_date,resource_type',
       sort: 'issue_number:asc',
       limit: '100',
     });
@@ -2982,6 +3579,7 @@ async function volumeIssues(volumeId) {
       id: String(row.id),
       number: row.issue_number == null ? null : String(row.issue_number),
       name: row.name || null,
+      releaseDate: validReleaseDay(row.store_date),
       blurb: firstSentence(plainText(row.description || '')),
       // Kept server-side so the cover proxy, not the browser, validates and
       // fetches provider URLs.
@@ -2992,7 +3590,7 @@ async function volumeIssues(volumeId) {
 
 function publicIssue(issue, volumeId) {
   return {
-    id: issue.id, number: issue.number, name: issue.name, blurb: issue.blurb,
+    id: issue.id, number: issue.number, name: issue.name, blurb: issue.blurb, releaseDate: issue.releaseDate,
     cover: issue.coverSource ? `/api/volume/${encodeURIComponent(volumeId)}/issue/${encodeURIComponent(issue.id)}/cover` : null,
   };
 }
@@ -3001,7 +3599,8 @@ app.get('/api/volume/:id/issues', async (req, res, next) => {
   const id = String(req.params.id);
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Unknown volume.' });
   try {
-    res.json({ items: (await volumeIssues(id)).map((issue) => publicIssue(issue, id)) });
+    const items = await volumeIssues(id);
+    res.json({ items: items.map((issue) => publicIssue(issue, id)), truncated: items.length >= 100 });
   } catch (error) {
     // The list is an enhancement; never fail the requests page over it.
     res.json({ items: [], reason: error.message });
@@ -3009,15 +3608,29 @@ app.get('/api/volume/:id/issues', async (req, res, next) => {
 });
 
 app.get('/api/request/:id/options', async (req, res, next) => {
+  if (multiUser && !can(req.member, 'request')) return res.status(403).json({ error: 'Request permission required.' });
   const id = requestId(req, res);
   if (!id) return;
   try {
-    const [parts, queued] = await Promise.all([mylarParts(id), queuedFor(id)]);
+    const [mylarCollection, queued] = await Promise.all([mylarParts(id), queuedFor(id)]);
     // Both answers a reader needs before choosing parts: whether this book is
     // already on the shelf, and whether it is already on its way. Neither
     // blocks the request -- a second copy is sometimes exactly what is wanted
     // -- but neither should be a surprise afterwards.
-    res.json({ ...parts, owned: await ownedTitle(getVolume(id)?.name), queued });
+    const owned = await ownedTitle(getVolume(id)?.name);
+    // Before Mylar tracks a volume, ComicVine's legitimate issue list is a
+    // preview only. Its ids never cross into Mylar; the later approval maps
+    // the selected numbers against Mylar's own freshly imported IDs.
+    const preview = mylarCollection.tracked ? null : await volumeIssues(id);
+    const parts = mylarCollection.tracked ? mylarCollection.parts : preview.map((issue) => ({
+      ...publicIssue(issue, id), source: 'catalogue', status: null, requestable: true,
+    }));
+    const payload = { tracked: mylarCollection.tracked, parts, owned, queued,
+      capabilities: requestCapabilities({ tracked: mylarCollection.tracked }),
+      partsTruncated: Boolean(preview && preview.length >= 100) };
+    res.json(multiUser && req.member?.role === 'requester'
+      ? { ...payload, owned: owned ? { available: true } : null, queued: [] }
+      : payload);
   } catch (error) { next(error); }
 });
 
