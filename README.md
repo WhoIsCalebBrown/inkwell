@@ -9,8 +9,8 @@ the volumes you actually want; and watch each one through the search, the
 download and the import until it is readable in Komga. Nothing is queued until
 you say so.
 
-Single-user trusted-LAN mode by default; optional invited accounts and admin
-approval for friends. No build step, framework or bundler.
+Fresh installs create an administrator in the browser, then add local users
+and approve friends’ requests. Existing installs keep their access mode. No build step, framework or bundler.
 
 [Watch the Inkwell showcase](https://youtu.be/aK3zhB4p0dA) — see discovery, browsing and requests in action.
 
@@ -74,11 +74,15 @@ Unraid; `/config` is a mount, so neither one touches your data.
 
 ## Before you expose it
 
-**Inkwell ships in single-user trusted-LAN mode and listens on port 3013.** In
-that mode, anything that can reach it can queue books, cancel them and untrack
-a series. You can opt into invited accounts and admin approval before sharing
-it with friends. There is no public registration. See [multi-user setup](docs/multi-user.md)
-before changing the access mode.
+**Fresh installs ask you to create an administrator account on first boot.**
+Choose your own username and password, check the required connections, then
+add friends from **Users → Create user**. No email service or default password
+is needed. Complete setup privately before sharing the address.
+
+Existing installations retain their access mode on upgrade. Shared single-user
+mode lets anyone with access queue books, cancel them, and untrack a series.
+Set `INKWELL_ACCESS_MODE=multi` to enable the browser account wizard on an
+existing single-user install. See [account setup](docs/multi-user.md).
 
 - In single-user mode, set `INKWELL_USER` and `INKWELL_PASSWORD` to put it behind
   shared HTTP Basic auth. These credentials are only an outer gate in multi-user

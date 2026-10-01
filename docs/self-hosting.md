@@ -1,7 +1,8 @@
 # Self-hosting Inkwell
 
-Inkwell starts as a single shared installation for a trusted LAN. Optional
-invited accounts and admin approval are documented in [multi-user setup](multi-user.md).
+Fresh installations create an administrator account through the browser, with
+local usernames and passwords and no email requirement. Existing installations
+keep their access mode. See [account setup](multi-user.md).
 There is no public registration or separate per-user Komga library.
 
 ## Install and first run
@@ -75,7 +76,7 @@ Normal users set `MYLAR_DIR` and `MYLAR_URL`. The deployment values below have s
 | `INKWELL_BIND` | `0.0.0.0` | Trusted-LAN bind; use `127.0.0.1` for a same-host proxy. |
 | `PUID` / `PGID` / `UMASK` | `1000` / `1000` / `002` | Ownership for `/config`; Unraid commonly uses `99` / `100`. |
 | `INKWELL_USER` / `INKWELL_PASSWORD` | empty | Optional shared HTTP Basic protection, recommended for remote access. |
-| `INKWELL_ACCESS_MODE` | `single` | Set to `multi` only after creating an admin in the same `/config` mount. Existing installations retain their behavior until then. |
+| `INKWELL_ACCESS_MODE` | `auto` | Fresh installations open the browser administrator wizard; existing installations keep their saved mode. `multi` enables accounts on a legacy install; `single` explicitly retains shared access. |
 | `INKWELL_ALLOW_HTTP` | empty | Set to `1` only for deliberate private-LAN account logins without HTTPS. |
 | `INKWELL_UNRAID_ICON` | empty | Optional PNG icon path or URL for the Unraid Docker page; ignored by ordinary Docker. The provided template uses `public/inkwell-unraid.png`, a 256px square. |
 | `INKWELL_VERSION` | empty (`latest`) | Which published image to deploy. Pin an exact version, such as `1.2.3`, to decide for yourself when to upgrade. |

@@ -273,13 +273,14 @@ async function render() {
   multiMode = installationSetup?.accessMode === 'multi';
   currentUser = multiMode ? (await api('/api/me').catch(() => null))?.user || null : null;
   const setupRequired = installationSetup && !installationSetup.completed;
-  const routeName = multiMode && name === 'invite' ? 'invite'
+  const routeName = installationSetup?.accountSetupRequired ? 'setup'
+    : multiMode && name === 'invite' ? 'invite'
     : multiMode && !currentUser ? 'login'
       : setupRequired ? 'setup' : name === 'approvals' ? 'library' : name;
   const route = routes[routeName] || routes.discover;
-  document.querySelector('[data-account]').hidden = !multiMode;
+  document.querySelector('[data-account]').hidden = !multiMode || setupRequired;
   document.querySelector('[data-account]').textContent = currentUser ? `${currentUser.displayName} · Account` : 'Sign in';
-  const signedOut = multiMode && !currentUser;
+  const signedOut = (multiMode && !currentUser) || setupRequired;
   document.querySelector('#nav').hidden = signedOut;
   document.querySelector('#search-form').hidden = signedOut;
   document.querySelector('.poster-control').hidden = signedOut;
@@ -343,18 +344,30 @@ routes.account = async () => {
     </form><button class="secondary account-signout" data-logout>Sign out</button></section>`;
 };
 
+function onboardingSteps(active) {
+  return `<ol class="onboarding-steps" aria-label="Setup progress">${['Administrator', 'Connections', 'Ready'].map((name, index) => `<li${index === active ? ' aria-current="step"' : ''}><span>${index + 1}</span>${name}</li>`).join('')}</ol>`;
+}
+
+function firstAdminHtml(setup) {
+  return `<section class="account-panel onboarding-panel"><span class="kicker">Welcome to Inkwell</span><h1>Create your administrator account.</h1><p class="onboarding-intro">Choose the username and password you’ll use to sign in. You can add friends from Users after setup. No email is needed.</p>${onboardingSteps(0)}
+    ${setup.accountSetupAllowed === false ? `<div class="onboarding-blocked"><b>Open setup over HTTPS or directly on your private LAN.</b><p>${esc(setup.accountSetupReason || 'This connection cannot create the first account.')}</p></div>` : `<form id="first-admin-form" class="account-form">
+      <label>Username<input name="username" autocomplete="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9_.-]+" required autofocus /><small>3–40 letters, numbers, dots, dashes, or underscores.</small></label>
+      <label>Display name (optional)<input name="displayName" autocomplete="name" maxlength="80" /></label>
+      <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /><small>Use at least 12 characters.</small></label>
+      <label>Confirm password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
+      ${setup.needsPrivateHttpAcknowledgement ? `<label class="permission-option"><input name="acknowledgePrivateHttp" type="checkbox" required /><span><b>Allow HTTP sign-in on this private LAN.</b><small>Passwords are not encrypted over HTTP. Use HTTPS before sharing access outside your LAN.</small></span></label>` : ''}
+      <p class="account-form-error" role="alert" hidden></p><button class="primary">Create administrator</button>
+    </form>`}</section>`;
+}
+
 routes.setup = async () => {
   const setup = installationSetup || await api('/api/setup');
+  if (setup.accountSetupRequired) { view.innerHTML = firstAdminHtml(setup); return; }
   const mylarConfigured = setup.requests?.configured && setup.requests?.endpoint;
   const comicVineConfigured = setup.discovery?.configured;
   const accessIsLan = setup.authentication === 'trusted-lan';
   const accessIsAccounts = setup.authentication === 'accounts';
-  view.innerHTML = `
-    ${lede('setup', {
-      kicker: 'First-run setup',
-      title: 'Set up your<br /><em>reading room.</em>',
-      body: 'Inkwell keeps its own data in /config and connects to the services you already run. Mylar and ComicVine are required; Komga is optional.',
-    })}
+  view.innerHTML = `<div class="setup-wizard"><div class="page-heading"><div><span class="kicker">${accessIsAccounts ? 'Your administrator account is ready' : 'First-run setup'}</span><h1>Connect your reading room.</h1><p>Check your comic services, then finish setup.</p></div></div>${accessIsAccounts ? onboardingSteps(1) : ''}
     <section class="settings-section">
       <div class="section-head"><span class="kicker no">01</span><h2>Required connections</h2><span class="kicker aside">Configure these in your deployment, then restart Inkwell</span></div>
       <div class="settings-grid request-settings">
@@ -364,16 +377,16 @@ routes.setup = async () => {
       ${mylarConfigured && comicVineConfigured ? '' : '<p class="settings-note">Open the Configuration guide for examples. Do not enter container paths, API keys, or Mylar database details in this browser.</p>'}
     </section>
     <section class="settings-section">
-      <div class="section-head"><span class="kicker no">02</span><h2>Access model</h2><span class="kicker aside">Inkwell v1 is one shared installation</span></div>
+      <div class="section-head"><span class="kicker no">02</span><h2>Access model</h2><span class="kicker aside">Your reading room</span></div>
       <div class="settings-grid request-settings">
-        <div class="setting"><span class="kicker">${accessIsAccounts ? 'Invited accounts' : accessIsLan ? 'Trusted LAN' : 'Shared Basic authentication'}</span><b>${accessIsAccounts ? 'Friends request; an admin approves.' : accessIsLan ? 'Anyone who can reach this address can use Inkwell.' : 'A shared username and password protects this installation.'}</b><small>${accessIsAccounts ? 'Create one-time invitations from Users. No public registration or direct requester access to Mylar controls.' : accessIsLan ? 'This is appropriate only on a private LAN. For remote access, use a reverse proxy, Tailscale, or a tunnel with HTTPS and authentication.' : 'Everyone using the shared credentials has the same access.'}</small></div>
+        <div class="setting"><span class="kicker">${accessIsAccounts ? 'Invited accounts' : accessIsLan ? 'Trusted LAN' : 'Shared Basic authentication'}</span><b>${accessIsAccounts ? 'Friends request; an admin approves.' : accessIsLan ? 'Anyone who can reach this address can use Inkwell.' : 'A shared username and password protects this installation.'}</b><small>${accessIsAccounts ? 'Create local users from Users and choose their permissions. Share an optional invitation link directly if a friend prefers to choose their own password.' : accessIsLan ? 'This is appropriate only on a private LAN. For remote access, use a reverse proxy, Tailscale, or a tunnel with HTTPS and authentication.' : 'Everyone using the shared credentials has the same access.'}</small></div>
       </div>
       ${accessIsLan ? '<label class="setting toggle"><input type="checkbox" data-acknowledge-trusted-lan /><span><b>I understand this unauthenticated installation is limited to my trusted LAN.</b><small>I will use reverse-proxy or Tailscale authentication before exposing it remotely.</small></span></label>' : ''}
     </section>
     <section class="settings-section">
       <div class="section-head"><span class="kicker no">03</span><h2>Finish</h2></div>
       <div class="cache-card"><div><b>Ready when both required connections are configured.</b><p>Komga, notifications, and advanced Mylar settings can be added later from your deployment configuration. Completing setup does not modify Mylar or Komga.</p></div><button class="act" data-complete-setup${mylarConfigured && comicVineConfigured ? '' : ' disabled'}>Finish setup</button></div>
-    </section>`;
+    </section></div>`;
 };
 
 /* ---------------- shelf ---------------- */
@@ -2736,6 +2749,33 @@ async function retryPart(comicId, issueId, button) {
 
 document.addEventListener('submit', async (event) => {
   const form = event.target;
+  if (form.id === 'first-admin-form') {
+    event.preventDefault();
+    const values = new FormData(form);
+    const errorBox = form.querySelector('.account-form-error');
+    errorBox.hidden = true;
+    if (values.get('password') !== values.get('confirmPassword')) {
+      errorBox.textContent = 'The passwords do not match.'; errorBox.hidden = false;
+      form.querySelector('[name="confirmPassword"]').focus(); return;
+    }
+    const button = form.querySelector('button.primary');
+    button.disabled = true; button.textContent = 'Creating administrator…';
+    try {
+      const result = await api('/api/setup/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        username: values.get('username'), displayName: values.get('displayName'), password: values.get('password'),
+        acknowledgePrivateHttp: values.has('acknowledgePrivateHttp'),
+      }) });
+      currentUser = result.user; installationSetup = result.setup; multiMode = true;
+      go('/setup');
+    } catch (error) {
+      errorBox.textContent = error.message; errorBox.hidden = false;
+      button.disabled = false; button.textContent = 'Create administrator';
+      // Another browser may have claimed the server while this form was open.
+      const setup = await api('/api/setup').catch(() => null);
+      if (setup && !setup.accountSetupRequired) { installationSetup = setup; go('/login'); }
+    }
+    return;
+  }
   if (form.id === 'mylar-settings-form') {
     event.preventDefault();
     const values = new FormData(form);
@@ -2980,7 +3020,7 @@ document.addEventListener('click', async (event) => {
         body: JSON.stringify({ acknowledgeTrustedLan: Boolean(acknowledge?.checked) }),
       });
       installationSetup = null;
-      go('/discover');
+      go(multiMode && canDo('manage_users') ? '/users' : '/discover');
       toast('Inkwell is ready.');
     } catch (error) {
       completeSetup.disabled = false;

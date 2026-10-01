@@ -70,7 +70,7 @@ jobs:
       - name: Provider-free HTTP contract
         run: |
           config="$(mktemp -d)"
-          CONFIG_DIR="$config" PORT=3099 node server.js > server.log 2>&1 &
+          CONFIG_DIR="$config" PORT=3099 INKWELL_ACCESS_MODE=single node server.js > server.log 2>&1 &
           server=$!
           trap 'kill $server 2>/dev/null || true' EXIT
           for _ in $(seq 1 40); do

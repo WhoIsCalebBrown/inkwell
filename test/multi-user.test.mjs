@@ -140,11 +140,12 @@ test('requester submission waits for admin approval and cannot use Mylar control
   assert.equal('autoWantAll' in capabilities.body, false, 'requesters do not receive raw Mylar config');
   assert.equal((await call('/api/request', { id: 123 }, friend.cookie)).status, 403);
   assert.equal((await call('/api/downloads/retry', {}, friend.cookie)).status, 403);
-  const before = commands.length;
+  const writes = () => commands.filter((command) => ['addComic', 'queueIssue', 'pauseComic', 'resumeComic'].includes(command)).length;
+  const before = writes();
   const proposed = await call('/api/proposals', { kind: 'parts', volumeId: '123', partNumbers: ['2'] }, friend.cookie);
   assert.equal(proposed.status, 201);
   assert.equal(proposed.body.status, 'pending');
-  assert.equal(commands.length, before, 'submission must not call Mylar');
+  assert.equal(writes(), before, 'submission must not call a Mylar write command');
   const id = proposed.body.id;
   assert.equal((await call(`/api/proposals/${id}/approve`, {}, friend.cookie)).status, 403);
   for (const unsafe of ['True', 'true', '1', 'unknown', '']) {

@@ -1,26 +1,42 @@
 # Invited accounts and approval
 
-Inkwell stays in its existing single-user mode on upgrade. Multi-user mode is
-an explicit setting. It has no public registration. Approval is on by default;
-an admin can enable automatic approval for everyone or selected accounts.
+Fresh installations open a browser setup wizard. You choose the administrator’s
+username and password; there are no default credentials and no email service.
+Existing installations keep their saved single-user or account access mode.
+Approval is on by default; admins can enable automatic approval for everyone
+or selected accounts.
 
-## Enable it
+## First boot
 
-1. Back up `/config`. Its SQLite database now contains accounts and approval
-   history that cannot be rebuilt from Mylar.
-2. With the new image but `INKWELL_ACCESS_MODE=single`, create the first admin
-   in an interactive terminal: `docker compose run --rm inkwell node create-admin.mjs`.
-   On Unraid, use the same image and `/config` mount in an interactive console.
-   The password is entered at a terminal prompt, not on a command line.
-3. Set `INKWELL_ACCESS_MODE=multi` and restart Inkwell. Finish normal first-run
-   setup while signed in as the admin if this is a new installation.
-4. Put Inkwell behind HTTPS before remote friends use it. Set
-   `INKWELL_TRUSTED_PROXIES` to the direct proxy's address/CIDR so the app
-   recognizes HTTPS. `INKWELL_ALLOW_HTTP=1` explicitly permits account login
-   over plain HTTP on a private LAN only.
-5. Open **Users** and choose **Create user** to add a local account, or
-   **Invite user** to let a friend choose their own username and password. Send
-   the invitation link yourself. Invitations expire in seven days.
+1. Open Inkwell privately on your LAN or through your HTTPS proxy.
+2. Choose an administrator username, optional display name, and password of at
+   least 12 characters. Confirm the password. If using direct private-LAN HTTP,
+   explicitly acknowledge that passwords are unencrypted. Public HTTP and
+   insecure forwarded connections cannot create the first account.
+3. Check the Mylar and ComicVine connections, then finish setup. You can create
+   the administrator before provider configuration is complete; it is saved
+   across restarts. Komga is optional.
+4. In **Users**, choose **Create user**, set a username and password, and select
+   permissions and a request limit. Friends can change their password after
+   signing in. An optional **Invite user** link lets a friend choose their own
+   credentials; share it yourself. Links expire after seven days and require no
+   email delivery.
+5. Use HTTPS before sharing access outside your private LAN. Configure
+   `INKWELL_TRUSTED_PROXIES` only for the actual HTTPS proxy. The saved private
+   HTTP acknowledgement permits direct private-LAN connections only.
+
+The first eligible visitor chooses the owner account. Once an account exists,
+the owner wizard cannot be reopened, including if that account is disabled.
+Complete initial setup before publishing the address for others to visit.
+
+## Upgrading an existing installation
+
+Back up `/config`, which contains accounts and approval history. The default
+`INKWELL_ACCESS_MODE=auto` preserves a completed legacy installation’s shared
+mode. Set it to `multi` and restart to enable accounts; if no account exists,
+the browser opens the same administrator wizard. No terminal command is needed.
+Explicit `single` retains shared trusted-LAN access. The optional
+`create-admin.mjs` utility remains available for terminal-based provisioning.
 
 The optional shared HTTP Basic credentials remain an outer gate. Everyone who
 passes that gate still needs their own Inkwell account and role.

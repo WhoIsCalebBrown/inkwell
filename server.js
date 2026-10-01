@@ -23,8 +23,8 @@ import {
   resolveRail, selectRails,
 } from './discovery.js';
 import {
-  adminCount, publicUser, authenticate, newSession, sessionUser, revokeSession,
-  createInvitation, createUser, acceptInvitation, submitProposal, proposalsFor, proposal,
+  adminCount, userCount, publicUser, authenticate, newSession, sessionUser, revokeSession,
+  createFirstAdmin, createInvitation, createUser, acceptInvitation, submitProposal, proposalsFor, proposal,
   changeProposal, markPart, markAttention, changePassword, listUsers, setUserActive,
   managedFollow, markManagedFollow, markManagedPaused, activeFollows, activePartRequests, requestFollowStop,
   activeFutureFollows, setFutureCutoff, claimFutureDispatch, finishFutureDispatch, futureDispatches, retryFutureDispatch,
@@ -101,12 +101,14 @@ if (fs.existsSync(envFile)) {
     }
   } catch { /* a local env file is optional */ }
 }
-const accessMode = process.env.INKWELL_ACCESS_MODE || 'single';
-if (!['single', 'multi'].includes(accessMode)) throw new Error('INKWELL_ACCESS_MODE must be single or multi.');
-const multiUser = accessMode === 'multi';
-if (multiUser && !adminCount()) {
-  throw new Error('Multi-user mode needs an administrator. Run node create-admin.mjs with the same /config mount first.');
-}
+const requestedAccessMode = process.env.INKWELL_ACCESS_MODE || 'auto';
+if (!['auto', 'single', 'multi'].includes(requestedAccessMode)) throw new Error('INKWELL_ACCESS_MODE must be auto, single or multi.');
+const savedInstallation = readSetting('installation');
+const effectiveAccessMode = requestedAccessMode === 'auto'
+  ? (savedInstallation?.accessMode || (userCount() || readSetting('owner_claimed') ? 'multi' : savedInstallation?.completedAt ? 'single' : 'multi'))
+  : requestedAccessMode;
+const multiUser = effectiveAccessMode === 'multi';
+const accountSetupRequired = () => multiUser && userCount() === 0 && !readSetting('owner_claimed');
 // Express does not trust X-Forwarded-* headers unless this explicit list is
 // configured. Most of Inkwell does not need forwarded headers today, but this
 // keeps a future proxy-aware feature from accidentally trusting every client.
@@ -241,12 +243,13 @@ function canRead(file) {
 // This deliberately validates configuration shape without making network calls
 // or returning paths/secrets to the browser. Mylar can be temporarily down and
 // Komga is optional; neither condition should stop a safe Inkwell boot.
-function setupStatus() {
+function setupStatus(req = null) {
   const mountedMylarConfig = canRead(configPath);
   const mylarCredential = Boolean(process.env.MYLAR_API_KEY?.trim() || mylarConfigValue('api_key'));
   const comicVineCredential = Boolean(process.env.COMICVINE_API_KEY?.trim() || mylarConfigValue('comicvine_api'));
   const installation = readSetting('installation');
   const configurationReady = comicVineCredential && mylarCredential && Boolean(mylarUrl);
+  const transport = accountSetupRequired() && req ? insecureAccountTransport(req) : null;
   return {
     firstRun: !installation?.completedAt,
     completed: Boolean(installation?.completedAt),
@@ -254,7 +257,11 @@ function setupStatus() {
     requests: { configured: mylarCredential, endpoint: Boolean(mylarUrl), endpointValid: Boolean(mylarUrl) },
     mylarConfig: { readable: mountedMylarConfig },
     authentication: multiUser ? 'accounts' : authUser && authPassword ? 'basic' : 'trusted-lan',
-    accessMode: multiUser ? 'multi' : 'single',
+    accessMode: effectiveAccessMode,
+    accountSetupRequired: accountSetupRequired(),
+    accountSetupAllowed: transport ? transport.allowed || transport.needsAcknowledgement : !accountSetupRequired(),
+    needsPrivateHttpAcknowledgement: Boolean(transport?.needsAcknowledgement),
+    accountSetupReason: transport?.reason ?? null,
     ready: configurationReady,
   };
 }
@@ -929,10 +936,9 @@ app.use((req, res, next) => {
 // Until a person has deliberately finished setup, do not let an accidentally
 // exposed fresh server make changes in Mylar or clear local state. Read-only
 // endpoints remain available so the setup screen and container diagnostics can
-// explain what is missing. This is not an account system: v1 is explicitly a
-// shared trusted-LAN or shared-Basic installation.
+// explain what is missing; account creation is the only unauthenticated setup write.
 app.use((req, res, next) => {
-  if (!WRITES.has(req.method) || req.path === '/api/setup/complete'
+  if (!WRITES.has(req.method) || ['/api/setup/complete', '/api/setup/admin'].includes(req.path)
       || (multiUser && ['/api/auth/login', '/api/auth/invite/accept', '/api/auth/logout'].includes(req.path))) return next();
   if (setupStatus().completed) return next();
   return res.status(428).json({
@@ -943,6 +949,7 @@ app.use((req, res, next) => {
 // In multi-user mode every API route needs an identity. A short explicit
 // requester allowlist keeps new Mylar controls admin-only by default.
 const loginFailures = new Map();
+const ownerAttempts = new Map();
 const requesterRead = [
   /^\/api\/(?:search|threads|threads\/browse|threads\/seeded\/[^/]+|publishers|formats|decades|lines)\/?$/,
   /^\/api\/(?:thread|publisher|decade)\//,
@@ -957,6 +964,24 @@ const sessionCookie = (req) => {
   return raw.find((part) => part.startsWith('inkwell_session='))?.slice('inkwell_session='.length) || '';
 };
 const localConnection = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+function privateDirectConnection(req) {
+  const address = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  const forwarded = Boolean(req.headers['x-forwarded-for'] || req.headers['x-forwarded-proto'] || req.headers.forwarded);
+  if (forwarded) return false;
+  if (address === '::1' || address.startsWith('fc') || address.startsWith('fd')) return true;
+  if (/^127\./.test(address) || /^10\./.test(address) || /^192\.168\./.test(address)) return true;
+  const match = address.match(/^172\.(\d{1,3})\./);
+  return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
+}
+function insecureAccountTransport(req) {
+  if (req.secure) return { allowed: true, needsAcknowledgement: false, reason: null };
+  if (localConnection(req) && privateDirectConnection(req)) return { allowed: true, needsAcknowledgement: false, reason: null };
+  if (!privateDirectConnection(req)) return { allowed: false, needsAcknowledgement: false, reason: 'Account setup requires HTTPS outside a direct private network.' };
+  if (process.env.INKWELL_ALLOW_HTTP === '1' || readSetting('installation')?.allowPrivateHttp) {
+    return { allowed: true, needsAcknowledgement: false, reason: null };
+  }
+  return { allowed: false, needsAcknowledgement: true, reason: 'Confirm this direct private-network connection before entering a password.' };
+}
 function setSessionCookie(req, res, value, maxAge) {
   const secure = req.secure;
   res.setHeader('Set-Cookie', `inkwell_session=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(maxAge / 1000)}${secure ? '; Secure' : ''}`);
@@ -964,9 +989,10 @@ function setSessionCookie(req, res, value, maxAge) {
 app.use((req, res, next) => {
   if (!multiUser || !req.path.startsWith('/api/')) return next();
   res.set('Cache-Control', 'private, no-store');
-  if (['/api/ready', '/api/live', '/api/setup', '/api/auth/login', '/api/auth/invite/accept'].includes(req.path)) return next();
+  if (['/api/ready', '/api/live', '/api/setup', '/api/setup/admin', '/api/auth/login', '/api/auth/invite/accept'].includes(req.path)) return next();
   req.member = sessionUser(sessionCookie(req));
   if (!req.member) return res.status(401).json({ error: 'Sign in to Inkwell.', code: 'login_required' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account access requires HTTPS outside a direct private network.' });
   if (req.member.role === 'admin') return next();
   if (['/api/me', '/api/auth/logout', '/api/auth/password', '/api/proposals'].includes(req.path)) return next();
   if (can(req.member, 'manage_users') && (req.path === '/api/users' || req.path === '/api/invitations'
@@ -980,9 +1006,7 @@ app.use((req, res, next) => {
 app.get('/api/me', (req, res) => res.json({ user: multiUser ? publicUser(req.member) : null, accessMode: multiUser ? 'multi' : 'single' }));
 app.post('/api/auth/login', async (req, res, next) => {
   if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
-  if (!req.secure && !localConnection(req) && process.env.INKWELL_ALLOW_HTTP !== '1') {
-    return res.status(403).json({ error: 'Account sign-in requires HTTPS. Configure a trusted HTTPS proxy.' });
-  }
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account sign-in requires HTTPS.' });
   const key = req.ip || req.socket.remoteAddress || 'unknown';
   const recent = (loginFailures.get(key) || []).filter((at) => Date.now() - at < 5 * 60_000);
   if (recent.length >= 8) return res.status(429).json({ error: 'Too many sign-in attempts. Try again later.' });
@@ -998,6 +1022,42 @@ app.post('/api/auth/login', async (req, res, next) => {
     res.json({ user: publicUser(user) });
   } catch (error) { next(error); }
 });
+app.post('/api/setup/admin', async (req, res) => {
+  if (!multiUser) return res.status(409).json({ error: 'Account setup is disabled by the selected access mode.' });
+  if (!accountSetupRequired()) return res.status(409).json({ error: 'This installation already has an account.' });
+  const transport = insecureAccountTransport(req);
+  const acknowledge = req.body?.acknowledgePrivateHttp === true;
+  const allowPrivateHttp = transport.needsAcknowledgement && acknowledge && privateDirectConnection(req);
+  if (!transport.allowed && !allowPrivateHttp) {
+    return res.status(403).json({ error: transport.reason || 'Account setup requires HTTPS.' });
+  }
+  // Count before hashing so concurrent unauthenticated attempts cannot all
+  // enter scrypt before the first failure reaches the limiter.
+  const now = Date.now();
+  for (const [address, attempts] of ownerAttempts) {
+    if (!attempts.some((at) => now - at < 5 * 60_000)) ownerAttempts.delete(address);
+  }
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (ownerAttempts.get(key) || []).filter((at) => now - at < 5 * 60_000);
+  if (recent.length >= 8 || (!ownerAttempts.has(key) && ownerAttempts.size >= 1024)) {
+    return res.status(429).json({ error: 'Too many setup attempts. Try again later.' });
+  }
+  ownerAttempts.set(key, [...recent, now]);
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((field) => !['username', 'displayName', 'password', 'acknowledgePrivateHttp'].includes(field))
+      || typeof body.username !== 'string' || typeof body.password !== 'string'
+      || (body.displayName !== undefined && typeof body.displayName !== 'string')
+      || (body.acknowledgePrivateHttp !== undefined && typeof body.acknowledgePrivateHttp !== 'boolean')) {
+    return res.status(400).json({ error: 'Enter a username and password using the setup form.' });
+  }
+  try {
+    const admin = await createFirstAdmin(body.username, body.displayName, body.password, { allowPrivateHttp });
+    const session = newSession(admin.id);
+    setSessionCookie(req, res, session.token, session.maxAge);
+    res.status(201).json({ user: publicUser(admin), setup: setupStatus(req) });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
 app.post('/api/auth/logout', (req, res) => {
   if (multiUser) revokeSession(sessionCookie(req));
   setSessionCookie(req, res, '', 0);
@@ -1005,6 +1065,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 app.post('/api/auth/password', async (req, res) => {
   if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Password changes require HTTPS.' });
   try {
     await changePassword(req.member.id, req.body?.currentPassword, req.body?.newPassword);
     setSessionCookie(req, res, '', 0);
@@ -1013,7 +1074,7 @@ app.post('/api/auth/password', async (req, res) => {
 });
 app.post('/api/auth/invite/accept', async (req, res) => {
   if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
-  if (!req.secure && !localConnection(req) && process.env.INKWELL_ALLOW_HTTP !== '1') {
+  if (!insecureAccountTransport(req).allowed) {
     return res.status(403).json({ error: 'Account creation requires HTTPS.' });
   }
   try {
@@ -1322,9 +1383,10 @@ app.get('/api/ready', (_req, res) => {
   return res.json({ ok: true, database: databaseLifecycle().schemaVersion });
 });
 app.get('/api/live', (_req, res) => res.json({ ok: !shuttingDown }));
-app.get('/api/setup', (_req, res) => res.json({ ...setupStatus(), database: databaseLifecycle().schemaVersion }));
+app.get('/api/setup', (req, res) => res.json({ ...setupStatus(req), database: databaseLifecycle().schemaVersion }));
 app.post('/api/setup/complete', (req, res) => {
-  const setup = setupStatus();
+  if (multiUser && req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  const setup = setupStatus(req);
   if (!setup.ready) {
     return res.status(422).json({
       error: 'Configure a valid Mylar API URL plus Mylar and ComicVine credentials before finishing setup.',
@@ -1339,6 +1401,7 @@ app.post('/api/setup/complete', (req, res) => {
     });
   }
   const installation = writeSetting('installation', {
+    ...(readSetting('installation') || {}),
     completedAt: new Date().toISOString(),
     access: setup.authentication,
   });

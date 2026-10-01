@@ -76,6 +76,15 @@ async function waitForReady(name) {
   throw new Error(`container ${name} never became ready: ${lastError?.message}`);
 }
 
+async function verifyFreshOnboarding(name) {
+  const port = docker(['port', name, '3000/tcp']).match(/:(\d+)$/m)?.[1];
+  const response = await fetch(`http://127.0.0.1:${port}/api/setup`, { signal: AbortSignal.timeout(1_000) });
+  const setup = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(setup.accessMode, 'multi', 'a fresh default image starts with the account wizard');
+  assert.equal(setup.accountSetupRequired, true);
+}
+
 function start(name, configMount, from = image) {
   containers.push(name);
   docker([
@@ -115,6 +124,7 @@ async function verifyPersistentMount(label, mount) {
   const first = `inkwell-smoke-${label}-first-${suffix}`;
   start(first, mount);
   await waitForReady(first);
+  await verifyFreshOnboarding(first);
   const pidUid = docker(['exec', first, 'sh', '-c', "awk '/^Uid:/{print $2}' /proc/1/status"]);
   assert.equal(pidUid, uid, `${label}: Node did not run as configured PUID`);
   writeMarker(first);

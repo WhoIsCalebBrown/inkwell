@@ -58,9 +58,9 @@ services:
       # this to anything wider.
       INKWELL_USER: ${INKWELL_USER:-}
       INKWELL_PASSWORD: ${INKWELL_PASSWORD:-}
-      # Existing installs remain single-user until an admin is created and
-      # this is explicitly set to multi.
-      INKWELL_ACCESS_MODE: ${INKWELL_ACCESS_MODE:-single}
+      # New installs create their administrator in the browser; auto preserves
+      # the saved access mode of existing installations.
+      INKWELL_ACCESS_MODE: ${INKWELL_ACCESS_MODE:-auto}
       INKWELL_ALLOW_HTTP: ${INKWELL_ALLOW_HTTP:-}
       # Empty means Express ignores all X-Forwarded-* headers. Configure only
       # the IP/CIDR of a proxy that directly connects to this container.

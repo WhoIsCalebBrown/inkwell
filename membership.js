@@ -65,17 +65,35 @@ async function checkPassword(password, stored) {
 }
 
 export const adminCount = () => Number(db.prepare("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1").get().n);
+export const userCount = () => Number(db.prepare('SELECT COUNT(*) AS n FROM users').get().n);
 export const publicUser = (user) => user && ({ id: user.id, username: user.username, displayName: user.display_name,
   role: user.role, permissions: permissionsOf(user), allowance: requestAllowance(user),
   autoApprove: user.role === 'admin' || can(user, 'auto_approve') || requestPolicy().autoApprove });
 
-export async function createFirstAdmin(username, displayName, password) {
-  if (adminCount()) throw new Error('An active administrator already exists.');
+export async function createFirstAdmin(username, displayName, password, { allowPrivateHttp = false } = {}) {
   const name = String(username || '').trim();
   if (!/^[a-zA-Z0-9_.-]{3,40}$/.test(name)) throw new Error('Username must be 3–40 letters, numbers, dots, dashes or underscores.');
   const hash = await hashPassword(password);
-  db.prepare('INSERT INTO users (username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(name, String(displayName || name).trim().slice(0, 80), 'admin', hash, Date.now());
+  // scrypt yields to the event loop. Claim first-admin status under SQLite's
+  // write lock after hashing, so two setup tabs cannot create two owners and
+  // a disabled old account never reopens an installation to public takeover.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (userCount() || readSetting('owner_claimed')) throw new Error('This installation already has an account.');
+    const result = db.prepare('INSERT INTO users (username, display_name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(name, String(displayName || name).trim().slice(0, 80), 'admin', hash, Date.now());
+    const now = Date.now();
+    writeSetting('owner_claimed', { at: now });
+    const installation = readSetting('installation') || {};
+    writeSetting('installation', { ...installation, accessMode: 'multi', accountsCreatedAt: new Date(now).toISOString(),
+      allowPrivateHttp: Boolean(allowPrivateHttp) });
+    db.exec('COMMIT');
+    return db.prepare('SELECT * FROM users WHERE id=?').get(Number(result.lastInsertRowid));
+  } catch (error) {
+    db.exec('ROLLBACK');
+    if (/UNIQUE constraint/.test(error.message)) throw new Error('That username is already taken.');
+    throw error;
+  }
 }
 
 function validUsername(username) {

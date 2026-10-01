@@ -848,3 +848,18 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .approval-decision { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 7px 13px; border-radius: 4px; font-size: 12px; font-weight: 500; }
 .approval-decision.approved { color: #94d3ad; border: 1px solid #395d4e; background: #1b2720; }
 .approval-decision.declined { color: var(--muted); border: 1px solid var(--rule); }
+
+.onboarding-panel { max-width: 520px; }
+.onboarding-intro { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 16px 0 24px; }
+.onboarding-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 22px; padding: 0; margin: 22px 0 30px; }
+.onboarding-steps li { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.onboarding-steps li span { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--rule); border-radius: 50%; }
+.onboarding-steps li[aria-current="step"] { color: var(--text); }
+.onboarding-steps li[aria-current="step"] span { border-color: var(--accent); color: var(--accent); }
+.onboarding-blocked { border: 1px solid var(--rule); background: var(--surface); padding: 18px; font-size: 13px; line-height: 1.6; }
+.onboarding-blocked p { color: var(--muted); margin: 8px 0 0; }
+.account-form-error { color: var(--accent); font-size: 13px; line-height: 1.5; margin: 0; }
+.setup-wizard { max-width: 1080px; margin: 35px auto; }
+.setup-wizard .page-heading .kicker { display: block; margin-bottom: 10px; }
+.setup-wizard .settings-section { margin-top: 24px; }
+@media (max-width: 720px) { .onboarding-steps { gap: 12px; } .setup-wizard { margin-top: 22px; } }
