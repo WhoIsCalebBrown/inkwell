@@ -1,0 +1,31 @@
+name: Feature suggestion
+description: Suggest an improvement to Inkwell.
+title: "Suggestion: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Please search existing issues first so related suggestions stay together.
+  - type: textarea
+    id: need
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task or frustration from your point of view.
+      placeholder: When I browse comics, I want to…
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What would help?
+      description: Describe your idea and any other approaches you considered.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Links, sketches, or examples are welcome.
+    validations:
+      required: false

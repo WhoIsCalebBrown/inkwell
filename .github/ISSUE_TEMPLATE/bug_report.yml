@@ -1,0 +1,49 @@
+name: Bug report
+description: Tell us what went wrong with Inkwell.
+title: "Bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please search existing issues first, and remove API keys, passwords, and private URLs from any logs or screenshots.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include what you expected to happen instead.
+      placeholder: I opened a comic and…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we reproduce it?
+      placeholder: |
+        1. Open…
+        2. Select…
+        3. See…
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Inkwell version
+      description: Image tag or commit, if known.
+      placeholder: v1.2.3 or main
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is Inkwell installed?
+      options:
+        - Docker Compose
+        - Unraid
+        - Running from source
+        - Other
+  - type: textarea
+    id: details
+    attributes:
+      label: Screenshots or logs
+      description: Add anything useful after removing API keys, passwords, and private URLs.
+    validations:
+      required: false
