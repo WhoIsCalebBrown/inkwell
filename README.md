@@ -11,6 +11,8 @@ you say so.
 
 Single user, LAN only, no build step, no framework, no bundler.
 
+[Watch the Inkwell showcase](https://youtu.be/aK3zhB4p0dA) — see discovery, browsing and requests in action.
+
 ![Inkwell's Discover page](docs/screenshots/discover-desktop.png)
 
 <details>
