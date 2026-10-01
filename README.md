@@ -9,7 +9,8 @@ the volumes you actually want; and watch each one through the search, the
 download and the import until it is readable in Komga. Nothing is queued until
 you say so.
 
-Single user, LAN only, no build step, no framework, no bundler.
+Single-user trusted-LAN mode by default; optional invited accounts and admin
+approval for friends. No build step, framework or bundler.
 
 [Watch the Inkwell showcase](https://youtu.be/aK3zhB4p0dA) — see discovery, browsing and requests in action.
 
@@ -73,24 +74,25 @@ Unraid; `/config` is a mount, so neither one touches your data.
 
 ## Before you expose it
 
-**Inkwell ships for a trusted LAN and listens on port 3013.** It drives a
-download client: anything that can reach it can queue books, cancel them and
-untrack a series. It is deliberately a single-user/shared-account application,
-not a public-registration or multi-user service. Two things guard write
-requests, and you should know the limits of both.
+**Inkwell ships in single-user trusted-LAN mode and listens on port 3013.** In
+that mode, anything that can reach it can queue books, cancel them and untrack
+a series. You can opt into invited accounts and admin approval before sharing
+it with friends. There is no public registration. See [multi-user setup](docs/multi-user.md)
+before changing the access mode.
 
-- Set `INKWELL_USER` and `INKWELL_PASSWORD` to put it behind HTTP basic auth.
-  Off by default, because a LAN-only install behind nothing does not need it
-  and a fake login would be worse than an honest none.
+- In single-user mode, set `INKWELL_USER` and `INKWELL_PASSWORD` to put it behind
+  shared HTTP Basic auth. These credentials are only an outer gate in multi-user
+  mode; they do not grant an Inkwell account or role.
 - Requests that change something must carry a header Inkwell's own pages send.
   A form on another site cannot set one, and a script that tries triggers a
   preflight Inkwell never answers — so a page you happen to be visiting cannot
   make your Inkwell act. This is not a substitute for a password.
 
-For remote access, terminate HTTPS and authenticate at a reverse proxy,
-Tailscale, or tunnel, and turn Basic auth on as well. Inkwell does not
-terminate HTTPS. It does not trust `X-Forwarded-*` headers unless the direct
-proxy IP/CIDR is explicitly listed in `INKWELL_TRUSTED_PROXIES`.
+For remote access, terminate HTTPS at a reverse proxy or tunnel. Account
+sign-in requires HTTPS outside loopback unless `INKWELL_ALLOW_HTTP=1` is
+explicitly set for a private LAN. Inkwell does not terminate HTTPS. It does not
+trust `X-Forwarded-*` headers unless the direct proxy IP/CIDR is explicitly
+listed in `INKWELL_TRUSTED_PROXIES`.
 
 ## What it cannot see
 

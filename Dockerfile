@@ -24,7 +24,8 @@ RUN apk add --no-cache su-exec
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
-COPY server.js store.js enrich.js lore.js discovery.js ./
+COPY server.js store.js membership.js mylar-settings.js enrich.js lore.js discovery.js ./
+COPY create-admin.mjs ./
 COPY public ./public
 COPY docker-entrypoint.sh /usr/local/bin/inkwell-entrypoint
 RUN chmod 755 /usr/local/bin/inkwell-entrypoint

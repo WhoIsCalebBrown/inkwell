@@ -13,6 +13,9 @@ let discoverBootstrapPoll;
 let discoverPagingCleanup = null;
 let discoverSession = null;
 let installationSetup = null;
+let currentUser = null;
+let multiMode = false;
+const canDo = (permission) => currentUser?.role === 'admin' || currentUser?.permissions?.includes(permission);
 
 // Comics vocabulary is genuinely opaque from the outside, and the app is full of
 // it. Anything in here gets a dotted underline and explains itself on hover.
@@ -83,7 +86,7 @@ const SOURCES = {
   'discovery metadata': 'A reusable collection matched from facts Inkwell has already saved locally: publisher, year, format, issue count, and recorded ComicVine characters or creators. It does not call a provider while you scroll.',
   'editorial discovery': 'A deliberately limited starting collection. The matching rules are written by Inkwell so the shelf is useful before the local catalogue has enough richer metadata; it is labelled editorial rather than presented as a provider fact.',
   'from your shelf': 'Built from the series you currently track in Mylar, while excluding those tracked series from the results. Publisher affinity works immediately; character and creator shelves appear only after their ComicVine records have been saved locally.',
-  'request scope': 'What pressing Request will actually hand to Mylar, spelled out before you press it. Nothing is queued until you confirm a selection.',
+  'request scope': 'What pressing Request does, spelled out before you press it. With accounts, an admin approves your selection before Mylar receives it.',
   'created by': 'The writers and artists ComicVine lists on this book’s own record. Opening one shows every other book its record names them on.',
   featuring: 'The characters ComicVine lists on this book’s record. It describes the book as a whole, not each issue inside it — a name here does not mean they appear on every page.',
 };
@@ -255,6 +258,7 @@ const crumbPublisher = (name) => (name
 const routes = {};
 function go(path) {
   if (sheet.open) sheet.close();
+  if (adminDialog.open) adminDialog.close();
   if (location.hash !== `#${path}`) location.hash = path; else render();
 }
 
@@ -266,9 +270,24 @@ async function render() {
   // installation from another device cannot accidentally skip it, while an
   // existing /config never sees setup again after a container replacement.
   installationSetup = await api('/api/setup').catch(() => null);
+  multiMode = installationSetup?.accessMode === 'multi';
+  currentUser = multiMode ? (await api('/api/me').catch(() => null))?.user || null : null;
   const setupRequired = installationSetup && !installationSetup.completed;
-  const routeName = setupRequired ? 'setup' : name;
+  const routeName = multiMode && name === 'invite' ? 'invite'
+    : multiMode && !currentUser ? 'login'
+      : setupRequired ? 'setup' : name === 'approvals' ? 'library' : name;
   const route = routes[routeName] || routes.discover;
+  document.querySelector('[data-account]').hidden = !multiMode;
+  document.querySelector('[data-account]').textContent = currentUser ? `${currentUser.displayName} · Account` : 'Sign in';
+  const signedOut = multiMode && !currentUser;
+  document.querySelector('#nav').hidden = signedOut;
+  document.querySelector('#search-form').hidden = signedOut;
+  document.querySelector('.poster-control').hidden = signedOut;
+  document.querySelector('.shelf-count').hidden = signedOut || (multiMode && currentUser?.role !== 'admin');
+  document.querySelector('[data-route="shelf"]').hidden = multiMode && currentUser?.role !== 'admin';
+  document.querySelector('.masthead-settings').hidden = signedOut;
+  document.querySelector('[data-route="users"]').hidden = !multiMode || !canDo('manage_users');
+  document.querySelector('[data-route="library"]').textContent = multiMode && canDo('manage_requests') ? 'Requests' : 'My requests';
   // Rail scroll listeners die with their elements, while vertical Discover
   // paging listens on window and therefore needs an explicit teardown.
   if (routeName !== 'discover') {
@@ -291,11 +310,45 @@ async function render() {
   }
 }
 
+routes.login = async () => {
+  view.innerHTML = `<section class="account-panel">
+    <span class="kicker">Welcome to Inkwell</span><h1>Sign in to request comics.</h1>
+    <form id="login-form" class="account-form">
+      <label>Username<input name="username" autocomplete="username" required /></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+      <button class="primary">Sign in</button>
+    </form></section>`;
+};
+
+routes.invite = async (inviteToken) => {
+  if (currentUser) return go('/discover');
+  view.innerHTML = `<section class="account-panel">
+    <span class="kicker">Invitation</span><h1>Join this reading room.</h1>
+    <form id="invite-form" class="account-form" data-token="${esc(inviteToken || '')}">
+      <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="40" /></label>
+      <label>Display name<input name="displayName" autocomplete="name" maxlength="80" /></label>
+      <label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" /></label>
+      <button class="primary">Create account</button>
+    </form></section>`;
+};
+
+routes.account = async () => {
+  if (!currentUser) return go('/login');
+  view.innerHTML = `<section class="account-panel"><span class="kicker">Your account</span>
+    <h1>${esc(currentUser.displayName)}</h1><p>${esc(currentUser.username)} · ${esc(currentUser.role)}</p>
+    <form id="password-form" class="account-form">
+      <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
+      <label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required /></label>
+      <button class="primary">Change password</button>
+    </form><button class="secondary account-signout" data-logout>Sign out</button></section>`;
+};
+
 routes.setup = async () => {
   const setup = installationSetup || await api('/api/setup');
   const mylarConfigured = setup.requests?.configured && setup.requests?.endpoint;
   const comicVineConfigured = setup.discovery?.configured;
   const accessIsLan = setup.authentication === 'trusted-lan';
+  const accessIsAccounts = setup.authentication === 'accounts';
   view.innerHTML = `
     ${lede('setup', {
       kicker: 'First-run setup',
@@ -313,7 +366,7 @@ routes.setup = async () => {
     <section class="settings-section">
       <div class="section-head"><span class="kicker no">02</span><h2>Access model</h2><span class="kicker aside">Inkwell v1 is one shared installation</span></div>
       <div class="settings-grid request-settings">
-        <div class="setting"><span class="kicker">${accessIsLan ? 'Trusted LAN' : 'Shared Basic authentication'}</span><b>${accessIsLan ? 'Anyone who can reach this address can use Inkwell.' : 'A shared username and password protects this installation.'}</b><small>${accessIsLan ? 'This is appropriate only on a private LAN. For remote access, use a reverse proxy, Tailscale, or a tunnel with HTTPS and authentication.' : 'Inkwell has no public registration, user accounts, or roles. Everyone using these credentials has the same access.'}</small></div>
+        <div class="setting"><span class="kicker">${accessIsAccounts ? 'Invited accounts' : accessIsLan ? 'Trusted LAN' : 'Shared Basic authentication'}</span><b>${accessIsAccounts ? 'Friends request; an admin approves.' : accessIsLan ? 'Anyone who can reach this address can use Inkwell.' : 'A shared username and password protects this installation.'}</b><small>${accessIsAccounts ? 'Create one-time invitations from Users. No public registration or direct requester access to Mylar controls.' : accessIsLan ? 'This is appropriate only on a private LAN. For remote access, use a reverse proxy, Tailscale, or a tunnel with HTTPS and authentication.' : 'Everyone using the shared credentials has the same access.'}</small></div>
       </div>
       ${accessIsLan ? '<label class="setting toggle"><input type="checkbox" data-acknowledge-trusted-lan /><span><b>I understand this unauthenticated installation is limited to my trusted LAN.</b><small>I will use reverse-proxy or Tailscale authentication before exposing it remotely.</small></span></label>' : ''}
     </section>
@@ -1598,10 +1651,11 @@ function queueWarning(queue) {
 // patched in place: a full re-render would collapse an unfurled parts list and
 // throw away the titles ComicVine filled in after paint.
 async function watchQueue(signature) {
+  const center = document.querySelector('.request-center');
+  if (!center) return;
   for (;;) {
     await new Promise((resolve) => { setTimeout(resolve, DOWNLOAD_POLL_MS); });
-    const center = document.querySelector('.request-center');
-    if (!center || !center.isConnected) return;
+    if (!center.isConnected) return;
     let queue;
     try { queue = await api('/api/downloads'); } catch { return; }
     if (!center.isConnected) return;
@@ -1896,14 +1950,144 @@ function requestCard(entry) {
   </article>`;
 }
 
-routes.library = async () => {
-  view.innerHTML = `<section class="lede" style="border:0"><span class="kicker" style="color:var(--accent)">Your shelf</span>
-    <h1>What you asked for,<br />and what <em>arrived</em>.</h1></section>${skeletons(1, '1fr')}`;
-  const [{ items, counts, komga }, activity, events, queue] = await Promise.all([
-    loadShelf(), api('/api/requests'),
-    api('/api/events').catch(() => ({ items: [] })),
-    api('/api/downloads').catch(() => ({ items: [], counts: { downloading: 0, waiting: 0, done: 0, failed: 0 } })),
-  ]);
+const proposalStatus = {
+  pending: 'Waiting for approval', rejected: 'Declined', withdrawn: 'Withdrawn',
+  approved: 'Approved', dispatching: 'Sending to Mylar', active: 'Following',
+  attention: 'Needs admin attention', stopped: 'Stopped',
+};
+
+function proposalProgress(item) {
+  if (item.future?.status === 'attention' && item.status === 'active') return 'Needs attention';
+  if (item.kind !== 'parts' || item.status !== 'active') return proposalStatus[item.status] || item.status;
+  const states = item.parts.map((part) => part.mylarStatus).filter(Boolean);
+  if (states.length !== item.parts.length) return 'Waiting for Mylar status';
+  if (states.every((state) => state === 'Archived')) return 'In library';
+  if (states.every((state) => ['Downloaded', 'Archived'].includes(state))) return 'Downloaded';
+  if (states.some((state) => state === 'Failed')) return 'Needs attention';
+  if (states.some((state) => state === 'Snatched')) return 'Handed to the downloader';
+  if (states.some((state) => state === 'Wanted')) return 'Waiting on a search';
+  return 'Mylar is handling this request';
+}
+
+function proposalCard(item, manager = false) {
+  const status = proposalProgress(item);
+  return `<article class="request-series proposal-card" data-proposal="${esc(item.id)}">
+    <div class="request-series-head">
+      <button class="request-series-cover" data-volume="${esc(item.volume_id)}">${coverHtml({ id: item.volume_id, title: item.title, cover: coverUrl(item.volume_id) })}</button>
+      <div><span class="status-pill ${requestCategory(item)}">${esc(status)}</span><h3>${esc(item.title)}</h3>
+        <p>${esc(item.kind === 'follow' ? `${item.parts.length ? `${item.parts.length} selected part${item.parts.length === 1 ? '' : 's'} + ` : ''}future releases` : `${item.parts.length} selected part${item.parts.length === 1 ? '' : 's'}`)}${manager ? ` · Requested by <b>${esc(item.requester)}</b>` : ''} · ${esc(new Date(item.created_at).toLocaleDateString())}</p>
+        ${item.reason ? `<p>${esc(item.reason)}</p>` : ''}
+        ${item.future?.cutoffDay ? `<p class="follow-since">Following releases after ${esc(item.future.cutoffDay)}${item.future.pausedReason ? ` · ${esc(item.future.pausedReason)}` : ''}</p>` : ''}
+        ${item.stop_requested_at ? '<p>Stop requested · waiting for an admin</p>' : ''}
+        ${manager && item.last_error ? `<p class="status warn">${esc(item.last_error)}</p>` : ''}
+        ${item.parts.length ? `<details class="request-detail"><summary>Selected parts (${item.parts.length})</summary><p>${item.parts.map((part) => `${esc(part.number)}${part.mylarStatus ? ` · ${esc(requestState(part.mylarStatus))}` : ''}`).join(' &nbsp; ')}</p></details>` : ''}
+        ${item.recentIssues?.length ? `<div class="follow-issues">${item.recentIssues.map((part) =>
+          `<span>${esc(part.number)}${part.name ? ` · ${esc(part.name)}` : ''} — ${esc(part.dispatchStatus === 'sending' ? 'Handoff needs checking' : requestState(part.status))}${manager && part.dispatchStatus === 'sending' ? ` <button class="secondary" data-retry-future="${item.id}" data-issue-id="${esc(part.issueId)}">Check / retry</button>` : ''}</span>`).join('')}</div>` : ''}
+      </div>
+      <div class="request-series-actions">
+        ${['approved', 'dispatching', 'active', 'attention', 'stopped'].includes(item.status) ? `<span class="approval-decision approved" aria-label="Request approved">✓ Approved</span>` : item.status === 'rejected' ? '<span class="approval-decision declined">Declined</span>' : ''}
+        ${manager && item.status === 'pending' ? `<button class="primary" data-approve="${item.id}">Approve</button><button class="secondary" data-reject="${item.id}">Decline</button>` : ''}
+        ${manager && item.status === 'attention' ? `<button class="secondary" data-retry-proposal="${item.id}">Retry handoff</button>` : ''}
+        ${manager && item.kind === 'follow' && item.status === 'active' ? `<button class="secondary quiet" data-stop-follow="${item.id}">Stop follow</button>` : ''}
+        ${item.user_id === currentUser?.id && item.status === 'pending' ? `<button class="secondary" data-withdraw="${item.id}">Withdraw</button>` : ''}
+        ${item.user_id === currentUser?.id && item.kind === 'follow' && item.status === 'active' && !item.stop_requested_at ? `<button class="secondary" data-request-stop="${item.id}">Ask to stop</button>` : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
+let requestItems = [];
+let usersOnPage = [];
+let settingsPolicy = null;
+const adminDialog = document.querySelector('#admin-dialog');
+
+function openAdminDialog(title, content) {
+  delete adminDialog.dataset.kind;
+  adminDialog.innerHTML = `<div class="admin-modal"><div class="modal-heading"><h2 id="admin-dialog-title">${esc(title)}</h2><button class="secondary" data-close-admin aria-label="Close dialog">Close</button></div>${content}</div>`;
+  if (!adminDialog.open) adminDialog.showModal();
+}
+
+function requestCategory(item) {
+  if (item.status === 'pending') return 'pending';
+  if (['rejected', 'withdrawn', 'stopped'].includes(item.status)) return 'closed';
+  if (item.status === 'attention' || item.parts.some((part) => part.mylarStatus === 'Failed')) return 'attention';
+  if (item.kind === 'parts' && item.parts.length && item.parts.every((part) => ['Downloaded', 'Archived'].includes(part.mylarStatus))) return 'available';
+  return 'processing';
+}
+
+function requestListToolbar(items, selected, manager) {
+  const filters = [['all', 'All'], ['pending', 'Pending'], ['processing', 'Processing'], ['available', 'Available'], ['attention', 'Needs attention'], ['closed', 'Closed']];
+  return `<nav class="page-tabs" aria-label="Request status">${filters.map(([value, label]) => `<a href="#/library/${value}" data-request-filter="${value}" aria-current="${selected === value ? 'page' : 'false'}">${label}<span>${items.filter((item) => value === 'all' || requestCategory(item) === value).length}</span></a>`).join('')}${currentUser?.role === 'admin' ? `<a href="#/library/mylar" aria-current="${selected === 'mylar' ? 'page' : 'false'}">Mylar activity</a>` : ''}</nav>
+    ${selected === 'mylar' ? '' : `<div class="list-toolbar"><label class="list-search">Search requests<input type="search" data-request-search placeholder="Search by title" /></label>${manager ? `<label>Requested by<select data-request-user><option value="">Everyone</option>${[...new Map(items.map((item) => [item.user_id, item.requester])).entries()].map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join('')}</select></label>` : ''}<span class="list-count" data-request-count></span></div>`}`;
+}
+
+function filterRequestList() {
+  const selected = document.querySelector('#request-list')?.dataset.filter || 'all';
+  const query = document.querySelector('[data-request-search]')?.value.trim().toLowerCase() || '';
+  const userId = document.querySelector('[data-request-user]')?.value || '';
+  const items = requestItems.filter((item) => (selected === 'all' || requestCategory(item) === selected)
+    && (!userId || String(item.user_id) === userId) && item.title.toLowerCase().includes(query));
+  const list = document.querySelector('#request-list');
+  if (!list) return;
+  list.innerHTML = items.map((item) => proposalCard(item, canDo('manage_requests'))).join('')
+    || `<div class="list-empty"><b>${requestItems.length ? 'No requests match these filters.' : 'No requests yet.'}</b><p>${requestItems.length ? 'Try another status, person, or title.' : 'Open a comic and choose Request. It will appear here for review and progress.'}</p>${!requestItems.length && currentUser?.role === 'admin' ? '<a class="secondary" href="#/library/mylar">View existing Mylar activity</a>' : ''}</div>`;
+  document.querySelector('[data-request-count]').textContent = `${items.length} request${items.length === 1 ? '' : 's'}`;
+}
+
+async function proposalRequests(selected = 'all') {
+  const manager = canDo('manage_requests');
+  const allowed = ['all', 'pending', 'processing', 'available', 'attention', 'closed', ...(currentUser?.role === 'admin' ? ['mylar'] : [])];
+  if (!allowed.includes(selected)) selected = 'all';
+  view.innerHTML = `<div class="management-loading">Loading requests…</div>`;
+  const routeHash = location.hash;
+  const { items } = await api('/api/proposals');
+  if (location.hash !== routeHash) return;
+  requestItems = items;
+  view.innerHTML = `<div class="management-page request-page"><div class="page-heading"><div><h1>${manager ? 'Requests' : 'My requests'}</h1><p>${manager ? 'Review requests and follow their progress.' : 'Your requests, from approval to your library.'}</p></div><button class="secondary" data-reload-page>Refresh</button></div>${requestListToolbar(items, selected, manager)}<div id="request-list" class="request-center" data-filter="${selected}"></div></div>`;
+  if (selected !== 'mylar') {
+    filterRequestList();
+    const list = document.querySelector('#request-list');
+    // Paint saved state immediately. Refreshing many Mylar series can take
+    // seconds, and an unrelated navigation must not get replaced afterward.
+    if (items.some((item) => ['active', 'attention'].includes(item.status))) api('/api/proposals?refresh=1').then(({ items: refreshed }) => {
+      if (!list.isConnected) return;
+      requestItems = refreshed;
+      document.querySelectorAll('[data-request-filter]').forEach((tab) => {
+        tab.querySelector('span').textContent = refreshed.filter((item) => tab.dataset.requestFilter === 'all' || requestCategory(item) === tab.dataset.requestFilter).length;
+      });
+      filterRequestList();
+    }).catch(() => {});
+    return;
+  }
+  const list = document.querySelector('#request-list');
+  list.innerHTML = '<div class="management-loading">Loading Mylar activity…</div>';
+  try {
+    const [shelf, activity, queue] = await Promise.all([loadShelf(), api('/api/requests'), api('/api/downloads').catch(() => ({ items: [], counts: { downloading: 0, waiting: 0, done: 0, failed: 0 } }))]);
+    const entries = requestEntries({ shelf: shelf.items, activity, queue });
+    list.innerHTML = `<p class="management-note">Existing Mylar activity may predate accounts and has no recorded requester. New Inkwell requests appear in the status tabs.</p><div class="mylar-toolbar"><span class="kicker" id="queue-summary">${queueSummary(queue)}</span><button class="secondary" data-refresh-requests>Refresh from Mylar</button></div>${searchStateHtml(activity)}<div id="queue-warning">${queueWarning(queue)}</div>${entries.map(requestCard).join('') || '<div class="list-empty">No Mylar activity.</div>'}`;
+    const withParts = entries.filter((entry) => entry.parts.length).map((entry) => entry.id);
+    if (withParts.length) hydrateRequestParts(withParts);
+    watchQueue(entries.map((entry) => entry.id).join(','));
+  } catch (error) { list.innerHTML = `<div class="list-empty">Mylar status is unavailable: ${esc(error.message)}</div>`; }
+}
+
+routes.library = async (selected) => {
+  if (multiMode) return proposalRequests(selected);
+  const heading = lede('library', { kicker: 'My requests', title: 'What you asked for,<br />and what <em>arrived</em>.' });
+  view.innerHTML = `${heading}${skeletons(1, '1fr')}`;
+  let provider;
+  try {
+    provider = await Promise.all([
+      loadShelf(), api('/api/requests'),
+      api('/api/events').catch(() => ({ items: [] })),
+      api('/api/downloads').catch(() => ({ items: [], counts: { downloading: 0, waiting: 0, done: 0, failed: 0 } })),
+    ]);
+  } catch (error) {
+    if (!multiMode) throw error;
+    view.innerHTML = `${heading}<div class="empty">Mylar status is unavailable: ${esc(error.message)}</div>`;
+    return;
+  }
+  const [{ items, counts, komga }, activity, events, queue] = provider;
   const entries = requestEntries({ shelf: items, activity, queue });
   view.innerHTML = `
     ${lede('library', {
@@ -1988,6 +2172,19 @@ routes.shelf = async () => {
 
 /* ---------------- settings ---------------- */
 
+const permissionLabels = [
+  ['request', 'Request books', 'Submit requests for selected issues, collections, or an ongoing series.'],
+  ['auto_approve', 'Auto-approve requests', 'Send this user’s own requests to Mylar without waiting for approval.'],
+  ['manage_requests', 'Manage requests', 'See everyone’s requests, approve or decline them, and manage ongoing follows.'],
+  ['manage_users', 'Manage users', 'Create and disable accounts, and edit permissions and request limits.'],
+];
+function permissionChoices(selected, name) {
+  return `<div class="permission-choices">${permissionLabels.map(([value, label, description]) => {
+    const locked = multiMode && !canDo(value);
+    return `<label class="permission-option"><input type="checkbox" name="${name}" value="${value}"${selected?.includes(value) ? ' checked' : ''}${locked ? ' disabled' : ''} /><span><b>${label}</b><small>${description}</small></span></label>`;
+  }).join('')}</div>`;
+}
+
 const healthState = (available, ready, missing) => available ? ready : missing;
 
 // Every one of these is a live service, and a page that waits on all four is
@@ -2018,46 +2215,167 @@ function connectionsHtml(health) {
     <article class="connection"><span class="kicker">Library</span><b>Komga</b><p class="status ${health.komga ? 'good' : 'warn'}">${healthState(health.komga, 'Connected', 'Not connected')}</p><small>Shows what has actually arrived on your shelf.</small></article>`;
 }
 
-routes.settings = async () => {
-  // Local numbers are on disk and answer instantly; the connection panel is
-  // the only part that depends on anything else, so it is the only part that
-  // waits.
-  const health = await api('/api/health').catch(() => null);
-  const cache = health?.cache ?? { entries: 0 };
-  const enrich = health?.enrichment ?? cache.enrichment ?? { pending: 0, done: 0 };
+function mylarSettingsForm(settings) {
+  if (!settings?.editable) return `<div class="cache-card"><div><b>Mylar request settings</b><p>${esc(settings?.reason || 'Mylar settings could not be read.')} Settings editing needs access to Mylar’s web interface; its API key alone does not unlock that page.</p></div><button class="secondary" data-reload-page>Retry</button></div>`;
+  const safe = !settings.autoWantAll && !settings.autoWantUpcoming;
+  return `<div class="settings-subheading"><h2>Mylar request settings</h2><p>These settings apply to the whole Mylar installation.</p></div><form id="mylar-settings-form" class="settings-form" data-version="${esc(settings.version)}">
+    <div class="form-row"><div><b>Who controls requests?</b><p>For Inkwell approvals and future-release choices, leave both options off. Inkwell will send only approved selections and follows.</p></div><div><span class="status-pill ${safe ? 'available' : 'attention'}">${safe ? 'Ready for Inkwell requests' : 'Mylar can request beyond Inkwell approvals'}</span><p>Affects other apps using this Mylar installation too.</p><button type="button" class="secondary" data-mylar-recommended>Use Inkwell control</button></div></div>
+    <div class="form-row"><div><b>Automatically request the back catalogue</b><p>Mylar’s autowant_all setting can request every existing issue when a series is added.</p></div><label class="permission-option"><input type="checkbox" name="autoWantAll"${settings.autoWantAll ? ' checked' : ''} /><span><b>Let Mylar request all existing issues</b><small>Keep off to respect the issues or volumes selected in Inkwell.</small></span></label></div>
+    <div class="form-row"><div><b>Automatically request upcoming issues</b><p>Mylar’s autowant_upcoming setting can request new releases across its tracked series.</p></div><label class="permission-option"><input type="checkbox" name="autoWantUpcoming"${settings.autoWantUpcoming ? ' checked' : ''} /><span><b>Let Mylar request upcoming issues</b><small>Keep off so each future follow needs approval in Inkwell.</small></span></label></div>
+    <div class="form-actions"><button class="primary">Save Mylar settings</button></div></form><p class="settings-note">Changes take effect in Mylar immediately. Other configuration is preserved; a private backup is saved before each change.</p>`;
+}
+
+routes.settings = async (section = 'general') => {
+  const operator = !multiMode || currentUser?.role === 'admin';
+  const tabs = [['general', 'General'], ['requests', 'Requests'], ...(multiMode && operator ? [['users', 'User defaults']] : []), ...(operator ? [['connections', 'Connections']] : []), ...(multiMode ? [['account', 'Your account']] : [])];
+  if (!tabs.some(([value]) => value === section)) section = 'general';
+  // Only the selected section loads data, so unrelated service diagnostics
+  // cannot delay opening display preferences or user permissions.
+  if (multiMode && operator && ['requests', 'users'].includes(section)) settingsPolicy = await api('/api/request-policy');
+  const policy = settingsPolicy;
   const starts = [['discover', 'Discover'], ['browse', 'Browse'], ['threads', 'Characters & creators'], ['library', 'My requests']];
-  view.innerHTML = `
-    ${lede('settings', {
-      kicker: 'Inkwell preferences',
-      title: 'Make the reading room<br /><em>your own.</em>',
-      body: 'These preferences only change Inkwell. Your Mylar, Komga and downloader setup stays untouched.',
-    })}
-    <section class="settings-section"><div class="section-head"><span class="kicker no">01</span><h2>Display</h2><span class="kicker aside">Saved on this device</span></div>
-      <div class="settings-grid">
-        <label class="setting"><span class="kicker">Start on</span><select data-setting="start-page">${starts.map(([value, label]) => `<option value="${value}"${setting('start-page', 'discover') === value ? ' selected' : ''}>${label}</option>`).join('')}</select><small>The page Inkwell opens to when you return.</small></label>
-        <label class="setting"><span class="kicker">Poster size</span><input data-setting="poster" type="range" min="110" max="320" step="10" value="${poster.value}" /><small>${poster.value}px wide · changes every shelf and search grid.</small></label>
-        <label class="setting"><span class="kicker">Results per page</span><select data-setting="page-size">${PAGE_SIZES.map((n) => `<option value="${n}"${n === pageSize() ? ' selected' : ''}>${n}</option>`).join('')}</select><small>Applies to publisher and search result pages.</small></label>
-        <label class="setting toggle"><input data-setting="reduce-motion" type="checkbox"${settingOn('reduce-motion') ? ' checked' : ''} /><span><b>Reduce motion</b><small>Stops loading shimmer and other non-essential movement.</small></span></label>
-      </div>
-    </section>
-    <section class="settings-section"><div class="section-head"><span class="kicker no">02</span><h2>Requests</h2><span class="kicker aside">Mylar remains the request manager</span></div>
-      <div class="settings-grid request-settings">
-        <div class="setting"><span class="kicker">Choose before requesting</span><b>Collections open a volume picker</b><small>For a multi-volume collection, choose individual parts or request all of them. Inkwell then queues only those parts in Mylar.</small></div>
-        <div class="setting"><span class="kicker">What happens next</span><b>Mylar searches in the background</b><small>Mylar, Prowlarr and your download client decide when a selected part arrives. Komga scans it after import.</small></div>
-      </div>
-    </section>
-    <section class="settings-section"><div class="section-head"><span class="kicker no">03</span><h2>Connections</h2><span class="kicker aside">Read-only diagnostics</span></div>
-      <div class="connection-grid" id="connections">${connectionsHtml(health)}</div>
-    </section>
-    <section class="settings-section"><div class="section-head"><span class="kicker no">04</span><h2>Local catalogue ${info('local catalogue')}</h2><span class="kicker aside">${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</span></div>
-      <div class="cache-card"><div><b>Builds a local catalogue as you browse</b><p>Every ComicVine result Inkwell sees is kept in SQLite: volumes, characters, creators, teams, events and their known links. Repeat searches use local data first, then only ask ComicVine for information Inkwell has not learned yet.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div>
-      <div class="cache-card enrichment-card"><div><b>Gentle enrichment is ${enrich.pending ? 'waiting' : 'caught up'}</b><p>${enrich.pending || 0} title${enrich.pending === 1 ? '' : 's'} queued · ${enrich.done || 0} enriched. Inkwell slowly fills in detail only for things you searched, opened, followed or requested. It pauses automatically when ComicVine rate-limits.</p></div></div>
-      <p class="settings-note">Clearing response cache does not erase the local catalogue, its relationship links, requests, downloads or Mylar settings.</p>
-    </section>
-    <section class="settings-section"><div class="section-head"><span class="kicker no">05</span><h2>Reset</h2></div>
-      <div class="cache-card"><div><b>Reset this device’s Inkwell preferences</b><p>Returns the start page, poster size, page size and request confirmation to their defaults. Server data is unaffected.</p></div><button class="secondary" data-reset-preferences>Reset preferences</button></div>
-    </section>`;
+  let content = '';
+  if (section === 'general') content = `<div class="settings-grid">
+    <label class="setting"><span class="kicker">Start on</span><select data-setting="start-page">${starts.map(([value, label]) => `<option value="${value}"${setting('start-page', 'discover') === value ? ' selected' : ''}>${label}</option>`).join('')}</select><small>The page Inkwell opens to when you return.</small></label>
+    <label class="setting"><span class="kicker">Poster size</span><input data-setting="poster" type="range" min="110" max="320" step="10" value="${poster.value}" /><small>${poster.value}px wide · changes every shelf and search grid.</small></label>
+    <label class="setting"><span class="kicker">Results per page</span><select data-setting="page-size">${PAGE_SIZES.map((n) => `<option value="${n}"${n === pageSize() ? ' selected' : ''}>${n}</option>`).join('')}</select><small>Applies to publisher and search result pages.</small></label>
+    <label class="setting toggle"><input data-setting="reduce-motion" type="checkbox"${settingOn('reduce-motion') ? ' checked' : ''} /><span><b>Reduce motion</b><small>Stops loading shimmer and other non-essential movement.</small></span></label>
+    </div><div class="cache-card preferences-reset"><div><b>Reset device preferences</b><p>Restore display choices and first-visit introductions.</p></div><button class="secondary" data-reset-preferences>Reset preferences</button></div>`;
+  if (section === 'requests') content = multiMode && operator ? `<form id="request-policy-form" data-policy-section="requests" class="settings-form">
+    <div class="form-row"><div><b>Request limit</b><p>Each selected issue or collection volume counts as one. An ongoing follow counts as one. Declined and withdrawn requests do not count.</p></div><div class="quota-fields"><label>Items<input name="limit" type="number" min="0" max="10000" value="${policy.limit}" required /></label><span>per</span><label>Days<input name="windowDays" type="number" min="1" max="365" value="${policy.windowDays}" required /></label><small>0 items means unlimited. This is a rolling window from submission; users can have individual limit overrides.</small></div></div>
+    <div class="form-row"><div><b>Automatic approval</b><p>Choose whether everyone can send requests straight to Mylar.</p></div><label class="permission-option"><input name="autoApprove" type="checkbox"${policy.autoApprove ? ' checked' : ''} /><span><b>Automatically approve all requests</b><small>When off, individual users can still have permission to auto-approve their own requests.</small></span></label></div>
+    <div class="form-actions"><button class="primary">Save changes</button></div></form>` : multiMode ? `<div class="cache-card"><div><b>${currentUser.allowance?.limit ? `${currentUser.allowance.remaining} of ${currentUser.allowance.limit} items left` : 'Unlimited requests'}</b><p>${currentUser.allowance?.limit ? `Within a rolling ${currentUser.allowance.windowDays}-day window. ` : ''}${currentUser.autoApprove ? 'Your requests are approved automatically.' : 'Your requests wait for approval.'}</p></div></div>` : `<div class="cache-card"><div><b>Choose the issues or volumes you want</b><p>Mylar searches for selected parts in the background. Follow new issues is a separate ongoing request.</p></div></div>`;
+  if (section === 'users') content = `<div class="cache-card"><div><b>Manage individual users</b><p>Edit each person’s permissions and request limit on the Users page.</p></div><a class="secondary" href="#/users">Manage users</a></div><form id="request-policy-form" data-policy-section="users" class="settings-form">
+    <div class="form-row"><div><b>Default permissions</b><p>Applied to new accounts. Existing accounts keep their individual permissions.</p></div>${permissionChoices(policy.defaultPermissions, 'defaultPermissions')}</div><div class="form-actions"><button class="primary">Save changes</button></div></form>`;
+  if (section === 'account') content = `<div class="cache-card"><div><b>${esc(currentUser.displayName)}</b><p>Change your password or sign out.</p></div><button class="secondary" data-account>Account settings</button></div>`;
+  if (section === 'connections') {
+    const [health, mylarSettings] = await Promise.all([api('/api/health').catch(() => null), api('/api/mylar/settings').catch(() => null)]);
+    const cache = health?.cache || {};
+    const enrich = health?.enrichment || cache.enrichment || {};
+    content = `<div class="connection-grid" id="connections">${connectionsHtml(health)}</div>${mylarSettingsForm(mylarSettings)}<div class="settings-subheading"><h2>Local catalogue ${info('local catalogue')}</h2><p>${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</p></div><div class="cache-card"><div><b>Saved as you browse</b><p>Repeat searches use the local catalogue first. ${enrich.pending || 0} titles waiting for enrichment · ${enrich.done || 0} enriched.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div><p class="settings-note">Clearing response cache keeps accounts, requests, catalogue relationships, and Mylar settings.</p>`;
+  }
+  const descriptions = { general: 'Display preferences are saved on this device.', requests: 'Request limits and approval policy.', users: 'Permissions for new accounts.', connections: 'Service connections, Mylar request settings, and catalogue diagnostics.', account: 'Your sign-in and account details.' };
+  view.innerHTML = `<div class="management-page settings-page"><div class="page-heading"><div><h1>Settings</h1><p>${descriptions[section]}</p></div></div><nav class="page-tabs" aria-label="Settings sections">${tabs.map(([value, label]) => `<a href="#/settings/${value}" aria-current="${section === value ? 'page' : 'false'}">${label}</a>`).join('')}</nav><section class="settings-content">${content}</section></div>`;
 };
+
+function userTableRows(users) {
+  return users.map((user) => `<tr><td><div class="user-identity"><span class="user-avatar" aria-hidden="true">${esc(user.display_name.slice(0, 1).toUpperCase())}</span><div><b>${esc(user.display_name)}</b><small>${esc(user.username)}${user.id === currentUser.id ? ' · You' : ''}</small></div></div></td>
+    <td><span class="status-pill ${user.active ? 'available' : 'closed'}">${user.active ? 'Active' : 'Disabled'}</span></td>
+    <td><div class="permission-summary">${user.role === 'admin' ? '<span>Administrator</span>' : permissionLabels.filter(([value]) => user.permissions.includes(value)).map(([,label]) => `<span>${esc(label)}</span>`).join('') || '<span>Browse only</span>'}</div></td>
+    <td>${user.allowance.limit ? `${user.allowance.used} / ${user.allowance.limit} items` : 'Unlimited'}<small class="cell-detail">${user.requestLimitOverride === null ? 'Default limit' : 'Custom limit'}</small></td>
+    <td>${user.id === currentUser.id ? '<span class="muted">Your account</span>' : (user.role === 'admin' && currentUser.role !== 'admin') || user.permissions.some((permission) => !canDo(permission)) ? '<span class="muted">Higher permissions</span>' : `<button class="secondary" data-edit-user="${user.id}">Edit</button>`}</td></tr>`).join('');
+}
+
+routes.users = async () => {
+  if (!multiMode || !canDo('manage_users')) return go('/settings');
+  const { items } = await api('/api/users');
+  usersOnPage = items;
+  view.innerHTML = `<div class="management-page users-page"><div class="page-heading"><div><h1>Users</h1><p>Manage accounts, permissions, and individual request limits.</p></div><div class="page-actions"><button class="secondary" data-invite-modal>Invite user</button><button class="primary" data-create-user>Create user</button></div></div><div class="list-toolbar"><label class="list-search">Search users<input type="search" data-user-search placeholder="Name or username" /></label>${currentUser.role === 'admin' ? '<a class="secondary" href="#/settings/users">Default permissions</a>' : ''}<span class="list-count" data-user-count>${items.length} users</span></div><div class="user-table-wrap"><table class="user-table"><thead><tr><th>User</th><th>Status</th><th>Permissions</th><th>Request limit</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="user-rows">${userTableRows(items)}</tbody></table></div><p class="management-note">Edit a user to set permissions or override the default request limit. Disabling an account ends its sessions.</p></div>`;
+};
+
+function openUserEditor(id) {
+  const user = usersOnPage.find((item) => String(item.id) === id);
+  if (!user) return;
+  const fixed = user.role === 'admin';
+  openAdminDialog(`Edit ${user.display_name}`, `<p class="modal-description">${esc(user.username)} · ${fixed ? 'Administrator' : 'Local account'}</p><form data-user-permissions="${user.id}" class="settings-form modal-form">
+    <nav class="page-tabs" aria-label="User settings"><button type="button" data-user-tab="permissions" aria-current="page">Permissions</button><button type="button" data-user-tab="limits" aria-current="false">Request limit</button><button type="button" data-user-tab="account" aria-current="false">Account</button></nav>
+    <section data-user-panel="permissions">${fixed ? '<p>Administrators have every permission.</p>' : permissionChoices(user.permissions, 'permissions')}</section>
+    <section data-user-panel="limits" hidden><label class="field-label">Item limit override<input name="requestLimitOverride" type="number" min="0" max="10000" value="${user.requestLimitOverride ?? ''}" placeholder="Inherit default"${fixed ? ' disabled' : ''} /></label><p class="management-note">Leave blank to inherit the default. 0 means unlimited. The installation’s rolling window applies.</p><p>${user.allowance.used} items used in the last ${user.allowance.windowDays} days.</p></section>
+    <section data-user-panel="account" hidden><div class="account-state"><div><b>${user.active ? 'Active account' : 'Disabled account'}</b><p>Disabling this account ends its sessions. Ongoing follows need separate review in Requests.</p></div><button type="button" class="secondary" data-user-status="${user.id}" data-active="${user.active ? 'false' : 'true'}">${user.active ? 'Disable account' : 'Enable account'}</button></div></section>
+    <div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button>${fixed ? '' : '<button class="primary">Save changes</button>'}</div></form>`);
+}
+
+async function openCreateUser() {
+  const defaults = currentUser.role === 'admin' ? (await api('/api/request-policy')).defaultPermissions : ['request'].filter(canDo);
+  openAdminDialog('Create user', `<p class="modal-description">Create a local account. Your friend can change their password after signing in.</p><form id="create-user-form" class="account-form modal-form"><div class="field-pair"><label>Display name<input name="displayName" maxlength="80" autocomplete="off" /></label><label>Username<input name="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9_.-]+" autocomplete="off" required /></label></div><label>Password<input name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required /><small>At least 12 characters.</small></label><fieldset><legend>Permissions</legend>${permissionChoices(defaults, 'permissions')}</fieldset><label>Request limit override<input name="requestLimitOverride" type="number" min="0" max="10000" placeholder="Inherit default" /><small>Leave blank to inherit the default. 0 means unlimited.</small></label><div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button><button class="primary">Create user</button></div></form>`);
+}
+
+let requestModal = null;
+const openedVolumes = new Map();
+
+async function openRequestModal(id, mode = 'selected') {
+  openAdminDialog('Request', '<div class="management-loading">Loading request choices…</div>');
+  adminDialog.dataset.kind = 'request';
+  const marker = {};
+  requestModal = marker;
+  try {
+    const item = openedVolumes.get(String(id)) || await api(`/api/volume/${id}`);
+    const [options, metadata] = await Promise.all([
+      api(`/api/request/${id}/options`).catch(() => ({ tracked: false, parts: [], capabilities: null })),
+      api(`/api/volume/${id}/issues`).catch(() => ({ items: [] })),
+    ]);
+    if (requestModal !== marker || !adminDialog.open) return;
+    const collection = item.edition !== 'Series';
+    const noun = collection ? 'volume' : 'issue';
+    const known = new Map((options.parts || []).map((part) => [String(part.number), part]));
+    const source = metadata.items?.length ? metadata.items : options.parts || [];
+    const parts = source.filter((part) => /^\d+(?:\.\d+)?$/.test(String(part.number)))
+      .map((part) => ({ ...part, ...known.get(String(part.number)), name: part.name || known.get(String(part.number))?.name,
+        requestable: known.get(String(part.number))?.requestable ?? true }))
+      .sort((a, b) => Number(a.number) - Number(b.number));
+    requestModal = { ...item, noun, collection, options, parts };
+    const auto = currentUser?.autoApprove;
+    const allowance = currentUser?.allowance;
+    const modes = [['selected', `Selected ${noun}s`, `Get only the ${noun}s you choose below.`],
+      ['future', `Future ${noun}s only`, `Follow new ${noun}s released after the approval date. Existing ${noun}s are excluded.`],
+      ['both', `Selected + future ${noun}s`, `Get your selection and follow later releases with one approval.`]];
+    openAdminDialog('Request', `<div class="request-modal-book">${coverHtml(item)}<div><h3>${esc(item.title)}</h3><p>${esc([item.edition, item.publisher, item.year].filter(Boolean).join(' · '))}</p></div></div>
+      <form id="comic-request-form" data-volume-id="${esc(id)}" class="modal-form"><fieldset class="request-scope-options"><legend>What would you like?</legend>${modes.map(([value, title, description]) => `<label class="request-scope"><input type="radio" name="scope" value="${value}"${mode === value ? ' checked' : ''} /><span><b>${esc(title)}</b><small>${esc(description)}</small></span></label>`).join('')}</fieldset>
+      ${metadata.truncated || options.partsTruncated ? `<p class="request-modal-notice">Only the first ${parts.length} ${noun}s are shown. Your request includes only the checked items below.</p>` : ''}
+      ${options.owned ? `<p class="request-modal-notice">This title is already in the library. Check the available ${noun}s before requesting another copy.</p>` : ''}
+      <section data-modal-parts><div class="request-selection-head"><h4>Choose ${noun}s</h4><div><button type="button" class="secondary" data-modal-select="all">Select all</button><button type="button" class="secondary" data-modal-select="none">Clear</button></div></div>
+      <div class="request-modal-parts">${parts.map((part) => `<label class="request-modal-part${part.requestable ? '' : ' handled'}"><input type="checkbox" name="partNumbers" value="${esc(part.number)}"${part.requestable ? ' checked' : ' disabled'} /><span><b>${esc(partName(part, noun))}</b><small>${esc(part.requestable ? part.releaseDate ? `Released ${part.releaseDate}` : 'Available to request' : requestState(part.status))}</small></span></label>`).join('') || `<p class="management-note">The ${noun} list is unavailable right now. Try again when catalogue metadata is available; no issue numbers have been assumed.</p>`}</div></section>
+      <p class="request-modal-notice" data-future-notice hidden>New releases are checked every five minutes using Mylar’s release information. Dates can arrive late. This follows this exact publication. Other series, spin-offs, and annuals need separate requests.</p>
+      <div class="request-summary" aria-live="polite"><b data-request-summary></b><p>${auto ? 'Your account can approve automatically when the request service is ready.' : 'A request manager reviews this selection before anything is sent to Mylar.'}</p><small>${allowance?.limit ? `${allowance.remaining} items remaining in your ${allowance.windowDays}-day window.` : 'No item limit.'} Each selected ${noun} counts as one item; a future follow counts as one more.</small><p data-request-readiness hidden></p></div>
+      <div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button><button type="submit" class="primary" data-submit-comic-request>Request</button></div></form>`);
+    adminDialog.dataset.kind = 'request';
+    refreshRequestModal();
+  } catch (error) {
+    if (requestModal === marker && adminDialog.open) openAdminDialog('Request', `<p class="modal-description">${esc(error.message)}</p>`);
+  }
+}
+
+function refreshRequestModal() {
+  const form = adminDialog.querySelector('#comic-request-form');
+  if (!form || !requestModal?.parts) return;
+  const mode = form.querySelector('[name="scope"]:checked')?.value || 'selected';
+  const future = mode !== 'selected';
+  const selected = mode !== 'future' ? [...form.querySelectorAll('[name="partNumbers"]:checked')].length : 0;
+  form.querySelector('[data-modal-parts]').hidden = mode === 'future';
+  form.querySelector('[data-future-notice]').hidden = !future;
+  const summary = mode === 'future' ? `Follow future ${requestModal.noun}s only`
+    : `${selected} ${requestModal.noun}${selected === 1 ? '' : 's'} selected${future ? ` + future ${requestModal.noun}s` : ''}`;
+  form.querySelector('[data-request-summary]').textContent = summary;
+  const cap = requestModal.options.capabilities;
+  const reason = (future && cap?.future?.available === false ? cap.future.reason : null)
+    || (selected && cap?.selected?.available === false ? cap.selected.reason : null);
+  const readiness = form.querySelector('[data-request-readiness]');
+  readiness.hidden = !reason;
+  readiness.textContent = reason ? `An admin needs to finish request setup before this can start. ${reason}` : '';
+  const units = selected + (future ? 1 : 0);
+  const remaining = currentUser?.allowance?.remaining;
+  const overLimit = remaining !== null && remaining !== undefined && units > remaining;
+  const button = form.querySelector('[data-submit-comic-request]');
+  button.disabled = !canDo('request') || (mode !== 'future' && !selected) || overLimit;
+  button.textContent = overLimit ? 'Request limit reached' : 'Request';
+}
+
+async function submitComicRequest(form) {
+  const button = form.querySelector('[data-submit-comic-request]');
+  const values = new FormData(form);
+  const scope = values.get('scope');
+  button.disabled = true;
+  button.textContent = 'Submitting…';
+  try {
+    const row = await api('/api/proposals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      kind: scope === 'selected' ? 'parts' : 'follow', volumeId: form.dataset.volumeId,
+      partNumbers: scope === 'future' ? [] : values.getAll('partNumbers'),
+    }) });
+    currentUser = (await api('/api/me')).user;
+    const pending = row.status === 'pending';
+    openAdminDialog(pending ? 'Request submitted' : 'Request approved', `<p class="modal-description"><b>${esc(row.title)}</b></p><p class="request-modal-notice">${pending ? 'Your request is waiting for approval. You can follow its progress in My requests.' : 'Your selection is approved. You can follow its progress in Requests.'}</p><div class="form-actions"><button class="secondary" data-close-admin>Done</button><a class="primary" href="#/library">View request</a></div>`);
+  } catch (error) { button.disabled = false; button.textContent = 'Request'; toast(error.message, 'error'); }
+}
 
 /* ---------------- volume sheet ---------------- */
 
@@ -2076,6 +2394,7 @@ async function openVolume(id) {
   sheet.showModal();
   try {
     const item = await api(`/api/volume/${id}`);
+    openedVolumes.set(String(id), item);
     const owned = item.requested || onShelf(item.id);
     const fromThread = location.hash.startsWith('#/thread/') ? state.thread : null;
     const isCollection = item.edition !== 'Series';
@@ -2083,8 +2402,14 @@ async function openVolume(id) {
     // Anything with more than one Mylar part gets a picker; the old one-click
     // series path made it impossible to ask for only issue #1.
     const canChooseParts = item.issues > 1;
+    const proposing = multiMode;
+    const mayRequest = !multiMode || canDo('request');
+    const needsApproval = proposing && !currentUser?.autoApprove;
     const partNoun = isCollection ? 'volume' : 'issue';
-    const requestScope = !canChooseParts
+    const requestScope = proposing
+      ? !mayRequest ? 'is unavailable for this account. Ask an admin for Request books permission.'
+        : `opens a picker for selected ${partNoun}s, future releases, or both. ${needsApproval ? 'Your choices wait for approval.' : 'Your account can approve automatically.'}`
+      : !canChooseParts
       ? (isCollection ? 'queues this one book.' : 'queues this single issue.')
       : isCollection
         ? `queues all ${item.issues} volumes — uncheck any you do not want before confirming.`
@@ -2147,12 +2472,12 @@ async function openVolume(id) {
                  it used to occupy this same slot without saying it behaved
                  differently forever. */ ''}
           <div class="actions">
-            ${canChooseParts
+            ${mayRequest ? multiMode ? `<button class="primary" data-request-modal="${esc(item.id)}">Request</button>` : canChooseParts
               ? `<button class="primary" data-pick-parts="${esc(item.id)}" data-part-noun="${partNoun}" data-part-total="${esc(item.issues)}">Request</button>`
-              : `<button class="primary" data-request-edition="${esc(item.id)}" ${owned ? 'disabled' : ''}>
+              : `<button class="primary" data-request-edition="${esc(item.id)}" ${owned && !proposing ? 'disabled' : ''}>
                   ${owned ? (shelfFlag(item) || 'Requested') : 'Request'}
-                 </button>`}
-            ${isCollection ? '' : `<button class="secondary" data-request-watch="${esc(item.id)}">Follow this series</button>`}
+                 </button>` : ''}
+            ${mayRequest && multiMode ? `<button class="secondary" data-request-modal="${esc(item.id)}" data-request-mode="future">Follow future ${isCollection ? 'volumes' : 'issues'}</button>` : mayRequest && !isCollection ? `<button class="secondary" data-request-watch="${esc(item.id)}">Follow new issues</button>` : ''}
             ${/* The end of the whole journey. If it is already on the shelf,
                   the most useful button on this sheet is the one that opens
                   it. */ ''}
@@ -2161,9 +2486,8 @@ async function openVolume(id) {
           </div>
           ${item.owned ? `<p class="picker-note owned">Already on your shelf${
             item.owned.books ? ` — ${plural(item.owned.books, 'book')}${item.owned.unread ? `, ${item.owned.unread} unread` : ''}` : ''}.</p>` : ''}
-          <p class="action-scope">${info('request scope')} <b>Request</b> ${esc(requestScope)}${isCollection ? ''
-            : ' <b>Follow this series</b> adds it to Mylar’s watchlist and keeps taking every future issue.'}</p>
-          ${canChooseParts ? `<div id="collection-request" class="collection-request" data-part-noun="${partNoun}" data-preselect-parts="${isCollection}"></div>` : ''}
+          <p class="action-scope">${info('request scope')} <b>Request</b> ${esc(requestScope)}${multiMode && mayRequest ? ` <b>Follow future ${partNoun}s</b> requests only releases after approval, without the back catalogue.` : !isCollection && mayRequest ? ' <b>Follow new issues</b> adds a standing request to Mylar.' : ''}</p>
+          ${canChooseParts && !multiMode ? `<div id="collection-request" class="collection-request" data-part-noun="${partNoun}" data-preselect-parts="${isCollection}"></div>` : ''}
         </div>
       </div>
       ${relatedSection(item.related?.creators, 'Books that name these creators')}
@@ -2268,7 +2592,9 @@ async function openPartPicker(id, button) {
   button.disabled = true;
   const noun = button.dataset.partNoun || 'part';
   try {
-    const options = await api(`/api/request/${id}/options`);
+    const options = multiMode
+      ? await api(`/api/request/${id}/options`).catch(() => ({ tracked: false, parts: [] }))
+      : await api(`/api/request/${id}/options`);
     // When Mylar has not seen this series yet, ComicVine's known part count is
     // enough to let the reader decide. Mylar is only involved after Request
     // selected, not as an awkward preliminary step.
@@ -2304,6 +2630,13 @@ async function queueSelectedParts(id, button) {
   button.disabled = true;
   button.textContent = 'Requesting…';
   try {
+    if (multiMode) {
+      const proposal = await api('/api/proposals', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'parts', volumeId: id, partNumbers }) });
+      button.textContent = proposal.status === 'pending' ? 'Submitted for approval' : 'Request sent';
+      toast(proposal.status === 'pending' ? 'Your selected parts are waiting for approval.' : 'Your selected parts were sent to Mylar.');
+      return;
+    }
     const result = await api(`/api/request/${id}/parts`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ partNumbers }),
     });
@@ -2330,6 +2663,15 @@ async function requestEdition(id, button) {
   button.disabled = true;
   button.textContent = 'Preparing…';
   try {
+    if (multiMode) {
+      const { items } = await api(`/api/volume/${id}/issues`).catch(() => ({ items: [] }));
+      const number = items?.[0]?.number || '1';
+      const proposal = await api('/api/proposals', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'parts', volumeId: id, partNumbers: [number] }) });
+      button.textContent = proposal.status === 'pending' ? 'Submitted for approval' : 'Request sent';
+      toast(proposal.status === 'pending' ? 'Your request is waiting for approval.' : 'Your request was sent to Mylar.');
+      return;
+    }
     const options = await preparedParts(id, (message) => { button.textContent = message.startsWith('Adding') ? 'Adding to Mylar…' : 'Preparing…'; });
     const part = options.parts.find((item) => item.requestable);
     if (!part) throw new Error('Mylar already has this edition queued or downloaded.');
@@ -2354,6 +2696,13 @@ async function addSeriesToMylar(id, button) {
   button.disabled = true;
   button.textContent = 'Adding…';
   try {
+    if (multiMode) {
+      const proposal = await api('/api/proposals', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'follow', volumeId: id }) });
+      button.textContent = proposal.status === 'pending' ? 'Submitted for approval' : 'Following';
+      toast(proposal.status === 'pending' ? 'A request manager will review your ongoing follow.' : 'Mylar is now following this series.');
+      return;
+    }
     await api('/api/request', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
     });
@@ -2385,7 +2734,220 @@ async function retryPart(comicId, issueId, button) {
 
 /* ---------------- events ---------------- */
 
+document.addEventListener('submit', async (event) => {
+  const form = event.target;
+  if (form.id === 'mylar-settings-form') {
+    event.preventDefault();
+    const values = new FormData(form);
+    const all = values.has('autoWantAll');
+    const upcoming = values.has('autoWantUpcoming');
+    if ((all || upcoming) && !window.confirm('Allow Mylar to request comics outside Inkwell’s approved selections? These options apply to every series in Mylar.')) return;
+    const button = form.querySelector('button.primary');
+    button.disabled = true;
+    try {
+      await api('/api/mylar/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoWantAll: all, autoWantUpcoming: upcoming, version: form.dataset.version }) });
+      toast('Mylar request settings saved.');
+      await routes.settings('connections');
+    } catch (error) { toast(error.message, 'error'); button.disabled = false; }
+    return;
+  }
+  if (form.id === 'comic-request-form') {
+    event.preventDefault();
+    await submitComicRequest(form);
+    return;
+  }
+  if (form.id === 'create-user-form') {
+    event.preventDefault();
+    const submit = form.querySelector('button.primary');
+    submit.disabled = true;
+    const values = new FormData(form);
+    const raw = String(values.get('requestLimitOverride') || '').trim();
+    try {
+      await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        username: values.get('username'), displayName: values.get('displayName'), password: values.get('password'),
+        permissions: values.getAll('permissions'), requestLimitOverride: raw === '' ? null : Number(raw),
+      }) });
+      adminDialog.close();
+      toast('User created.');
+      render();
+    } catch (error) { submit.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
+  if (form.id === 'decline-request-form') {
+    event.preventDefault();
+    const submit = form.querySelector('button.primary');
+    submit.disabled = true;
+    try {
+      await api(`/api/proposals/${form.dataset.id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: new FormData(form).get('reason') }) });
+      adminDialog.close();
+      toast('Request declined.');
+      render();
+    } catch (error) { submit.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
+  if (form.id === 'request-policy-form' || form.matches('[data-user-permissions]')) {
+    event.preventDefault();
+    const submit = form.querySelector('button.primary');
+    submit.disabled = true;
+    const values = new FormData(form);
+    try {
+      if (form.id === 'request-policy-form') {
+        await api('/api/request-policy', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...settingsPolicy, ...(form.dataset.policySection === 'users'
+            ? { defaultPermissions: values.getAll('defaultPermissions') }
+            : { limit: Number(values.get('limit')), windowDays: Number(values.get('windowDays')), autoApprove: values.has('autoApprove') }) }) });
+        toast('Request settings saved.');
+      } else {
+        const raw = String(values.get('requestLimitOverride') || '').trim();
+        await api(`/api/users/${form.dataset.userPermissions}/permissions`, { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permissions: values.getAll('permissions'),
+            requestLimitOverride: raw === '' ? null : Number(raw) }) });
+        adminDialog.close();
+        toast('User settings saved.');
+      }
+      render();
+    } catch (error) { submit.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
+  if (!['login-form', 'invite-form', 'password-form'].includes(form.id)) return;
+  event.preventDefault();
+  const submit = form.querySelector('button[type="submit"], button.primary');
+  submit.disabled = true;
+  const data = Object.fromEntries(new FormData(form));
+  try {
+    if (form.id === 'password-form') {
+      await api('/api/auth/password', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data) });
+      toast('Password changed. Sign in again.');
+      go('/login');
+    } else if (form.id === 'invite-form') {
+      await api('/api/auth/invite/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, token: form.dataset.token }) });
+      toast('Account created. Sign in to start requesting.');
+      go('/login');
+    } else {
+      await api('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data) });
+      go('/discover');
+    }
+  } catch (error) {
+    submit.disabled = false;
+    toast(error.message, 'error');
+  }
+});
+
 document.addEventListener('click', async (event) => {
+  if (event.target.closest('[data-mylar-recommended]')) {
+    const form = document.querySelector('#mylar-settings-form');
+    form.querySelector('[name="autoWantAll"]').checked = false;
+    form.querySelector('[name="autoWantUpcoming"]').checked = false;
+    return;
+  }
+  const futureRetry = event.target.closest('[data-retry-future]');
+  if (futureRetry) {
+    if (!window.confirm('Check Mylar and retry this release if it is still unrequested? The previous handoff was not confirmed.')) return;
+    futureRetry.disabled = true;
+    try {
+      await api(`/api/proposals/${futureRetry.dataset.retryFuture}/future/${futureRetry.dataset.issueId}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      await routes.library(location.hash.split('/')[2]);
+    } catch (error) { toast(error.message, 'error'); futureRetry.disabled = false; }
+    return;
+  }
+  const requestModalButton = event.target.closest('[data-request-modal]');
+  if (requestModalButton) return openRequestModal(requestModalButton.dataset.requestModal, requestModalButton.dataset.requestMode || 'selected');
+  const selectParts = event.target.closest('[data-modal-select]');
+  if (selectParts) {
+    adminDialog.querySelectorAll('[name="partNumbers"]:not(:disabled)').forEach((part) => { part.checked = selectParts.dataset.modalSelect === 'all'; });
+    refreshRequestModal();
+    return;
+  }
+  if (event.target.closest('[data-close-admin]')) return adminDialog.close();
+  if (event.target.closest('[data-reload-page]')) return render();
+  if (event.target.closest('[data-create-user]')) return openCreateUser();
+  const editUser = event.target.closest('[data-edit-user]');
+  if (editUser) return openUserEditor(editUser.dataset.editUser);
+  const userTab = event.target.closest('[data-user-tab]');
+  if (userTab) {
+    adminDialog.querySelectorAll('[data-user-tab]').forEach((tab) => tab.setAttribute('aria-current', tab === userTab ? 'page' : 'false'));
+    adminDialog.querySelectorAll('[data-user-panel]').forEach((panel) => { panel.hidden = panel.dataset.userPanel !== userTab.dataset.userTab; });
+    return;
+  }
+  if (event.target.closest('[data-invite-modal]')) {
+    openAdminDialog('Invite user', `<p class="modal-description">Your friend chooses their own username and password. The one-time invitation expires in seven days and uses the default permissions.</p><div class="invite-link" data-invite-link hidden></div><div class="form-actions"><button class="secondary" data-close-admin>Cancel</button><button class="primary" data-create-invite>Create invitation</button></div>`);
+    return;
+  }
+  const account = event.target.closest('[data-account]');
+  if (account) {
+    return go(currentUser ? '/account' : '/login');
+  }
+  const signOut = event.target.closest('[data-logout]');
+  if (signOut) {
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    currentUser = null;
+    return go('/login');
+  }
+  const userStatus = event.target.closest('[data-user-status]');
+  if (userStatus) {
+    userStatus.disabled = true;
+    try {
+      await api(`/api/users/${userStatus.dataset.userStatus}/status`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: userStatus.dataset.active === 'true' }) });
+      adminDialog.close();
+      render();
+    } catch (error) { userStatus.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
+  const invitation = event.target.closest('[data-create-invite]');
+  if (invitation) {
+    invitation.disabled = true;
+    try {
+      const created = await api('/api/invitations', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'requester' }) });
+      const link = `${location.origin}/#/invite/${created.token}`;
+      const slot = document.querySelector('[data-invite-link]');
+      slot.hidden = false;
+      slot.innerHTML = `<label>Share this one-time link<input readonly value="${esc(link)}" /></label>`;
+      slot.querySelector('input').select();
+      invitation.disabled = false;
+    } catch (error) { invitation.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
+  const approval = event.target.closest('[data-approve], [data-reject], [data-retry-proposal], [data-withdraw]');
+  if (approval) {
+    const action = approval.hasAttribute('data-approve') ? 'approve'
+      : approval.hasAttribute('data-reject') ? 'reject'
+        : approval.hasAttribute('data-retry-proposal') ? 'retry' : 'withdraw';
+    const id = approval.dataset.approve || approval.dataset.reject || approval.dataset.retryProposal || approval.dataset.withdraw;
+    if (action === 'reject') {
+      const item = requestItems.find((item) => String(item.id) === id);
+      openAdminDialog('Decline request', `<p class="modal-description">${esc(item?.title || 'This request')}${item ? ` · Requested by ${esc(item.requester)}` : ''}</p><form id="decline-request-form" data-id="${esc(id)}" class="account-form modal-form"><label>Reason (optional)<textarea name="reason" maxlength="400" rows="3" placeholder="Let the requester know why."></textarea></label><div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button><button class="primary">Decline request</button></div></form>`);
+      return;
+    }
+    const reason = null;
+    approval.disabled = true;
+    try {
+      await api(`/api/proposals/${id}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }) });
+      toast(action === 'approve' ? 'Request approved. Progress is shown in the request list.' : 'Request updated.');
+      render();
+    } catch (error) { approval.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
+  const stopFollow = event.target.closest('[data-stop-follow], [data-request-stop]');
+  if (stopFollow) {
+    const admin = stopFollow.hasAttribute('data-stop-follow');
+    const id = stopFollow.dataset.stopFollow || stopFollow.dataset.requestStop;
+    if (admin && !window.confirm('Stop following future releases? Issues already requested will keep processing.')) return;
+    stopFollow.disabled = true;
+    try {
+      const result = await api(`/api/proposals/${id}/${admin ? 'stop' : 'stop-request'}`, { method: 'POST' });
+      toast(result.message || (admin ? 'Follow stopped.' : 'An admin will review your stop request.'));
+      render();
+    } catch (error) { stopFollow.disabled = false; toast(error.message, 'error'); }
+    return;
+  }
   const testMylar = event.target.closest('[data-test-mylar]');
   if (testMylar && !testMylar.disabled) {
     const result = document.querySelector('[data-mylar-test]');
@@ -2768,6 +3330,21 @@ document.querySelector('#search-form').addEventListener('submit', (event) => {
   if (query.length >= 2) { searchInput.blur(); go(`/search/${encodeURIComponent(query)}`); }
 });
 
+document.addEventListener('input', (event) => {
+  if (event.target.matches('[data-request-search]')) filterRequestList();
+  if (event.target.matches('[data-user-search]')) {
+    const query = event.target.value.trim().toLowerCase();
+    const users = usersOnPage.filter((user) => `${user.display_name} ${user.username}`.toLowerCase().includes(query));
+    document.querySelector('#user-rows').innerHTML = userTableRows(users) || '<tr><td colspan="5">No users match your search.</td></tr>';
+    document.querySelector('[data-user-count]').textContent = `${users.length} users`;
+  }
+});
+document.addEventListener('change', (event) => {
+  if (event.target.matches('[data-request-user]')) filterRequestList();
+  if (event.target.closest('#comic-request-form')) refreshRequestModal();
+});
+adminDialog.addEventListener('click', (event) => { if (event.target === adminDialog) adminDialog.close(); });
+adminDialog.addEventListener('close', () => { adminDialog.innerHTML = ''; requestModal = null; delete adminDialog.dataset.kind; });
 sheet.addEventListener('click', (event) => { if (event.target === sheet) sheet.close(); });
 window.addEventListener('hashchange', render);
 // The shelf count lives in the masthead on every page, so it is loaded once at

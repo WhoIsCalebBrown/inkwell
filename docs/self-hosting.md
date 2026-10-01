@@ -1,6 +1,8 @@
 # Self-hosting Inkwell
 
-Inkwell v1 is a single shared installation for a trusted LAN or a reverse proxy, Tailscale, or tunnel that provides HTTPS and access control. It has no user accounts, registration, roles, or per-user libraries.
+Inkwell starts as a single shared installation for a trusted LAN. Optional
+invited accounts and admin approval are documented in [multi-user setup](multi-user.md).
+There is no public registration or separate per-user Komga library.
 
 ## Install and first run
 
@@ -73,6 +75,8 @@ Normal users set `MYLAR_DIR` and `MYLAR_URL`. The deployment values below have s
 | `INKWELL_BIND` | `0.0.0.0` | Trusted-LAN bind; use `127.0.0.1` for a same-host proxy. |
 | `PUID` / `PGID` / `UMASK` | `1000` / `1000` / `002` | Ownership for `/config`; Unraid commonly uses `99` / `100`. |
 | `INKWELL_USER` / `INKWELL_PASSWORD` | empty | Optional shared HTTP Basic protection, recommended for remote access. |
+| `INKWELL_ACCESS_MODE` | `single` | Set to `multi` only after creating an admin in the same `/config` mount. Existing installations retain their behavior until then. |
+| `INKWELL_ALLOW_HTTP` | empty | Set to `1` only for deliberate private-LAN account logins without HTTPS. |
 | `INKWELL_UNRAID_ICON` | empty | Optional PNG icon path or URL for the Unraid Docker page; ignored by ordinary Docker. The provided template uses `public/inkwell-unraid.png`, a 256px square. |
 | `INKWELL_VERSION` | empty (`latest`) | Which published image to deploy. Pin an exact version, such as `1.2.3`, to decide for yourself when to upgrade. |
 
@@ -84,7 +88,7 @@ Do not set `CONFIG_DIR`, `CACHE_DB`, `COVER_DIR`, or `PORT` in ordinary containe
 
 `/config` is Inkwell's full application-data boundary:
 
-- `cache.db` and SQLite `-wal` / `-shm`: setup state, request snapshots, history, catalogue, and queue state.
+- `cache.db` and SQLite `-wal` / `-shm`: setup state, catalogue, queue state and, in multi-user mode, irreplaceable accounts and approval history.
 - `covers/`: cached artwork; regenerable but worth retaining.
 - `backups/`: automatic pre-migration SQLite backups.
 
@@ -155,7 +159,7 @@ proxy_pass http://inkwell:3000;
 
 Caddy's `reverse_proxy inkwell:3000`, Nginx Proxy Manager's normal proxy-host setup, and Traefik's normal HTTP router/service configuration use this same root-host model. Set `INKWELL_TRUSTED_PROXIES` only to the direct proxy's IP/CIDR when forwarded values must be trusted; leave it empty by default. Inkwell never trusts arbitrary client-supplied forwarded headers.
 
-Subpath deployments such as `https://example.com/inkwell` are unsupported in v1 because the UI uses root-relative API and asset paths. Use a dedicated hostname. For remote access, terminate HTTPS at the proxy/tunnel and use proxy authentication and/or `INKWELL_USER` / `INKWELL_PASSWORD`. Plain HTTP on `0.0.0.0:3013` is intentionally trusted-LAN only.
+Subpath deployments such as `https://example.com/inkwell` are unsupported because the UI uses root-relative API and asset paths. Use a dedicated hostname. For remote access, terminate HTTPS at the proxy/tunnel; shared Basic credentials may provide an additional outer gate, but multi-user mode always requires an Inkwell account. Plain HTTP on `0.0.0.0:3013` is intentionally trusted-LAN only.
 
 ## Troubleshooting
 
