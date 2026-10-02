@@ -38,6 +38,8 @@ test('requester submission waits for admin approval and cannot use Mylar control
   let tracked = false;
   let weeklyTracked = false;
   const commands = [];
+  let holdIndex = false;
+  let heldIndex = null;
   let holdWeekly = false;
   let heldResponse = null;
   let extraWeeklyIssue = false;
@@ -52,10 +54,14 @@ test('requester submission waits for admin approval and cannot use Mylar control
     const cmd = url.searchParams.get('cmd');
     commands.push(cmd);
     res.setHeader('Content-Type', 'application/json');
-    if (cmd === 'getIndex') return res.end(JSON.stringify({ data: [
+    if (cmd === 'getIndex') {
+      const answer = () => res.end(JSON.stringify({ data: [
       ...(tracked ? [{ id: 123, name: 'Example Series' }] : []),
       ...(weeklyTracked ? [{ id: 456, name: 'New Weekly Series' }] : []),
-    ] }));
+      ] }));
+      if (holdIndex) { heldIndex = answer; return; }
+      return answer();
+    }
     if (cmd === 'getComic') {
       const id = url.searchParams.get('id');
       const data = id === '456' && weeklyTracked
@@ -288,6 +294,28 @@ test('requester submission waits for admin approval and cannot use Mylar control
   const automatic = await call('/api/proposals', { kind: 'parts', volumeId: '123', partNumbers: ['1'] }, secondFriend.cookie);
   assert.equal(automatic.body.status, 'active', JSON.stringify(automatic.body));
   assert.equal(commands.filter((command) => command === 'queueIssue').length, queuedBeforeAuto + 1);
+  // Hold the safety read, then turn off Friends mode before it can write. A
+  // stale requester session must leave an automatically approved request
+  // pending rather than queueing a comic after its authority was revoked.
+  const queuedBeforeRevocation = commands.filter((command) => command === 'queueIssue').length;
+  assert.equal((await call('/api/cache/clear', {}, admin.cookie)).status, 200);
+  holdIndex = true;
+  const revokingRequest = call('/api/proposals', { kind: 'parts', volumeId: '123', partNumbers: ['2'] }, secondFriend.cookie);
+  for (let attempt = 0; !heldIndex && attempt < 40; attempt += 1) await sleep(25);
+  assert.ok(heldIndex, 'the auto-approval safety read should be held');
+  assert.equal((await call('/api/access/mode', { mode: 'personal', currentPassword: 'a long test password' }, admin.cookie)).status, 200);
+  holdIndex = false;
+  heldIndex();
+  const revoked = await revokingRequest;
+  assert.equal(revoked.body.status, 'pending', JSON.stringify(revoked.body));
+  assert.equal(commands.filter((command) => command === 'queueIssue').length, queuedBeforeRevocation);
+  assert.equal((await call('/api/access/mode', { mode: 'friends', currentPassword: 'a long test password' }, admin.cookie)).status, 200);
+  const thirdFriendAgain = await call('/api/auth/login', { username: 'friend3', password: 'a fourth long password' });
+  assert.equal(thirdFriendAgain.status, 200);
+  thirdFriend.cookie = thirdFriendAgain.cookie;
+  const secondFriendAgain = await call('/api/auth/login', { username: 'friend2', password: 'a third long password' });
+  assert.equal(secondFriendAgain.status, 200);
+  secondFriend.cookie = secondFriendAgain.cookie;
   assert.equal((await call('/api/request-policy', {
     limit: 1, windowDays: 30, autoApprove: true, defaultPermissions: [],
   }, admin.cookie, 'PUT')).status, 200);
@@ -311,7 +339,7 @@ test('requester submission waits for admin approval and cannot use Mylar control
     username: 'no', password: 'a sixth long password', permissions: ['request'],
   }, admin.cookie)).status, 400, 'direct creation validates usernames');
   assert.equal((await call('/api/users', {
-    username: 'weak-password', password: 'short', permissions: ['request'],
+    username: 'weak-password', password: 'four', permissions: ['request'],
   }, admin.cookie)).status, 400, 'direct creation validates passwords');
   assert.equal((await call('/api/users', {
     username: 'denied-friend', password: 'a seventh long password', permissions: ['request'],

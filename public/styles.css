@@ -863,3 +863,27 @@ dialog::backdrop { background: rgba(10, 9, 6, 0.72); backdrop-filter: blur(3px);
 .setup-wizard .page-heading .kicker { display: block; margin-bottom: 10px; }
 .setup-wizard .settings-section { margin-top: 24px; }
 @media (max-width: 720px) { .onboarding-steps { gap: 12px; } .setup-wizard { margin-top: 22px; } }
+
+.account-settings-page { max-width: 1080px; margin: 0 auto; }
+.account-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.account-settings-card, .access-settings-card { border: 1px solid var(--rule); background: var(--surface); padding: 26px; }
+.account-settings-card h2, .access-settings-card h2 { font: 400 32px/1.1 var(--disp); margin: 0 0 12px; }
+.account-settings-card > p, .access-settings-card > p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 24px; }
+.account-settings-card .account-form > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.access-mode-choices { min-width: 0; padding: 0; border: 0; display: grid; gap: 10px; }
+.access-mode-choices legend { font-size: 13px; margin-bottom: 10px; }
+.account-form select { appearance: none; border: 1px solid var(--rule); background-color: var(--ground); color: var(--text); padding: 12px 34px 12px 12px; font: 14px var(--ui); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Cpath d='m3 4 3 3 3-3' fill='none' stroke='%23948b78' stroke-width='1.5'/%3E%3C/svg%3E"); background-position: right 12px center; background-repeat: no-repeat; }
+.account-form .request-scope, .account-form .permission-option { display: flex; }
+.account-form .request-scope input, .account-form .permission-option input { width: 17px; height: 17px; padding: 0; flex: none; }
+.password-field > small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.password-strength { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.password-strength-bars { display: flex; gap: 4px; }
+.password-strength-bars i { display: block; width: 22px; height: 4px; background: var(--rule); }
+.password-strength[data-level='1'] { color: #ea8b70; }
+.password-strength[data-level='2'] { color: #d9bd75; }
+.password-strength[data-level='3'], .password-strength[data-level='4'] { color: #94d3ad; }
+.password-strength[data-level='1'] i:first-child { background: #ea8b70; }
+.password-strength[data-level='2'] i:nth-child(-n+2) { background: #d9bd75; }
+.password-strength[data-level='3'] i:nth-child(-n+3), .password-strength[data-level='4'] i { background: #94d3ad; }
+.account-state + .account-state { border-top: 1px solid var(--rule); margin-top: 20px; padding-top: 20px; }
+@media (max-width: 720px) { .account-settings-grid { grid-template-columns: 1fr; } .account-settings-card, .access-settings-card { padding: 20px; } }

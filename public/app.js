@@ -15,6 +15,7 @@ let discoverSession = null;
 let installationSetup = null;
 let currentUser = null;
 let multiMode = false;
+const friendsMode = () => installationSetup?.userMode !== 'personal';
 const canDo = (permission) => currentUser?.role === 'admin' || currentUser?.permissions?.includes(permission);
 
 // Comics vocabulary is genuinely opaque from the outside, and the app is full of
@@ -287,7 +288,7 @@ async function render() {
   document.querySelector('.shelf-count').hidden = signedOut || (multiMode && currentUser?.role !== 'admin');
   document.querySelector('[data-route="shelf"]').hidden = multiMode && currentUser?.role !== 'admin';
   document.querySelector('.masthead-settings').hidden = signedOut;
-  document.querySelector('[data-route="users"]').hidden = !multiMode || !canDo('manage_users');
+  document.querySelector('[data-route="users"]').hidden = !multiMode || !friendsMode() || !canDo('manage_users');
   document.querySelector('[data-route="library"]').textContent = multiMode && canDo('manage_requests') ? 'Requests' : 'My requests';
   // Rail scroll listeners die with their elements, while vertical Discover
   // paging listens on window and therefore needs an explicit teardown.
@@ -313,7 +314,7 @@ async function render() {
 
 routes.login = async () => {
   view.innerHTML = `<section class="account-panel">
-    <span class="kicker">Welcome to Inkwell</span><h1>Sign in to request comics.</h1>
+    <span class="kicker">Welcome to Inkwell</span><h1>${friendsMode() ? 'Sign in to request comics.' : 'Sign in to your reading room.'}</h1>${!friendsMode() ? '<p class="onboarding-intro">Personal mode is limited to administrator accounts.</p>' : ''}
     <form id="login-form" class="account-form">
       <label>Username<input name="username" autocomplete="username" required /></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
@@ -322,26 +323,45 @@ routes.login = async () => {
 };
 
 routes.invite = async (inviteToken) => {
+  if (!friendsMode()) { view.innerHTML = '<section class="account-panel"><span class="kicker">Personal mode</span><h1>Invitations are paused.</h1><p class="onboarding-intro">This reading room currently accepts administrator sign-in only. Ask the admin to enable Friends mode.</p><a class="secondary" href="#/login">Sign in</a></section>'; return; }
   if (currentUser) return go('/discover');
   view.innerHTML = `<section class="account-panel">
     <span class="kicker">Invitation</span><h1>Join this reading room.</h1>
     <form id="invite-form" class="account-form" data-token="${esc(inviteToken || '')}">
       <label>Username<input name="username" autocomplete="username" required minlength="3" maxlength="40" /></label>
       <label>Display name<input name="displayName" autocomplete="name" maxlength="80" /></label>
-      <label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12" /></label>
+      ${passwordField('password')}
       <button class="primary">Create account</button>
     </form></section>`;
 };
 
+function passwordField(name, label = 'Password') {
+  return `<label class="password-field">${esc(label)}<input name="${esc(name)}" type="password" autocomplete="new-password" minlength="5" maxlength="256" data-password-meter required /><small>5–256 characters. Longer, unique passwords are safer.</small><span class="password-strength" data-password-strength aria-live="polite"><span class="password-strength-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span data-strength-label>Enter a password</span></span></label>`;
+}
+
+function passwordStrength(value) {
+  const unique = new Set(value).size;
+  const common = /^(?:password|qwerty|12345|abc123|letmein|admin)(?:[0-9!@#$]*)$/i.test(value) || /^(.)\1+$/.test(value);
+  if (value.length < 8 || unique < 4 || common) return { level: 1, label: 'Weak' };
+  const kinds = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((pattern) => pattern.test(value)).length;
+  if ((value.length >= 20 && unique >= 8) || (value.length >= 16 && kinds >= 3 && unique >= 8)) return { level: 4, label: 'Very strong' };
+  if ((value.length >= 12 && unique >= 6) || (value.length >= 10 && kinds >= 3 && unique >= 6)) return { level: 3, label: 'Strong' };
+  return { level: 2, label: 'Medium' };
+}
+
+function accountSettingsHtml() {
+  return `<div class="account-settings-grid"><section class="account-settings-card"><h2>Profile</h2><p>Choose how friends see you and the username you sign in with.</p><form id="profile-form" class="account-form">
+    <label>Display name<input name="displayName" maxlength="80" value="${esc(currentUser.displayName)}" autocomplete="name" required /></label>
+    <label>Username<input name="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9_.-]+" value="${esc(currentUser.username)}" autocomplete="username" required /></label>
+    <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
+    <small>Changing your username signs you out on every device. Requests stay linked to your account.</small><p class="account-form-error" role="alert" hidden></p><button class="primary">Save profile</button></form></section>
+    <section class="account-settings-card"><h2>Password</h2><p>Change your password. Every device will need to sign in again.</p><form id="password-form" class="account-form"><label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required /></label>${passwordField('newPassword', 'New password')}<label>Confirm password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="5" maxlength="256" required /></label><p class="account-form-error" role="alert" hidden></p><button class="primary">Change password</button></form></section></div><button class="secondary account-signout" data-logout>Sign out</button>`;
+}
+
 routes.account = async () => {
+  if (!multiMode) return go('/settings/access');
   if (!currentUser) return go('/login');
-  view.innerHTML = `<section class="account-panel"><span class="kicker">Your account</span>
-    <h1>${esc(currentUser.displayName)}</h1><p>${esc(currentUser.username)} · ${esc(currentUser.role)}</p>
-    <form id="password-form" class="account-form">
-      <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
-      <label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="12" required /></label>
-      <button class="primary">Change password</button>
-    </form><button class="secondary account-signout" data-logout>Sign out</button></section>`;
+  view.innerHTML = `<div class="management-page account-settings-page"><div class="page-heading"><div><h1>Your account</h1><p>${esc(currentUser.displayName)} · ${esc(currentUser.username)}</p></div></div>${accountSettingsHtml()}</div>`;
 };
 
 function onboardingSteps(active) {
@@ -349,16 +369,22 @@ function onboardingSteps(active) {
 }
 
 function firstAdminHtml(setup) {
-  return `<section class="account-panel onboarding-panel"><span class="kicker">Welcome to Inkwell</span><h1>Create your administrator account.</h1><p class="onboarding-intro">Choose the username and password you’ll use to sign in. You can add friends from Users after setup. No email is needed.</p>${onboardingSteps(0)}
+  return `<section class="account-panel onboarding-panel"><span class="kicker">${setup.accountUpgradeAvailable ? 'Account setup' : 'Welcome to Inkwell'}</span><h1>Create your administrator account.</h1><p class="onboarding-intro">Choose your sign-in details, then use Inkwell on your own or with friends. No email is needed.${setup.accountUpgradeAvailable ? ' Your existing library and requests are kept.' : ''}</p>${setup.accountUpgradeAvailable ? '' : onboardingSteps(0)}
     ${setup.accountSetupAllowed === false ? `<div class="onboarding-blocked"><b>Open setup over HTTPS or directly on your private LAN.</b><p>${esc(setup.accountSetupReason || 'This connection cannot create the first account.')}</p></div>` : `<form id="first-admin-form" class="account-form">
       <label>Username<input name="username" autocomplete="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9_.-]+" required autofocus /><small>3–40 letters, numbers, dots, dashes, or underscores.</small></label>
       <label>Display name (optional)<input name="displayName" autocomplete="name" maxlength="80" /></label>
-      <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /><small>Use at least 12 characters.</small></label>
-      <label>Confirm password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
+      ${passwordField('password')}
+      <label>Confirm password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="5" maxlength="256" required /></label>
+      <label>How will you use Inkwell?<select name="mode"><option value="friends">Friends — accounts and approvals</option><option value="personal">Personal — administrators only</option></select></label>
       ${setup.needsPrivateHttpAcknowledgement ? `<label class="permission-option"><input name="acknowledgePrivateHttp" type="checkbox" required /><span><b>Allow HTTP sign-in on this private LAN.</b><small>Passwords are not encrypted over HTTP. Use HTTPS before sharing access outside your LAN.</small></span></label>` : ''}
       <p class="account-form-error" role="alert" hidden></p><button class="primary">Create administrator</button>
     </form>`}</section>`;
 }
+
+routes['setup-account'] = async () => {
+  if (!installationSetup?.accountUpgradeAvailable) return go('/settings/access');
+  view.innerHTML = firstAdminHtml(installationSetup);
+};
 
 routes.setup = async () => {
   const setup = installationSetup || await api('/api/setup');
@@ -2240,7 +2266,7 @@ function mylarSettingsForm(settings) {
 
 routes.settings = async (section = 'general') => {
   const operator = !multiMode || currentUser?.role === 'admin';
-  const tabs = [['general', 'General'], ['requests', 'Requests'], ...(multiMode && operator ? [['users', 'User defaults']] : []), ...(operator ? [['connections', 'Connections']] : []), ...(multiMode ? [['account', 'Your account']] : [])];
+  const tabs = [['general', 'General'], ...(operator ? [['access', 'Access']] : []), ['requests', 'Requests'], ...(multiMode && operator && friendsMode() ? [['users', 'User defaults']] : []), ...(operator ? [['connections', 'Connections']] : []), ...(multiMode ? [['account', 'Your account']] : [])];
   if (!tabs.some(([value]) => value === section)) section = 'general';
   // Only the selected section loads data, so unrelated service diagnostics
   // cannot delay opening display preferences or user permissions.
@@ -2260,14 +2286,18 @@ routes.settings = async (section = 'general') => {
     <div class="form-actions"><button class="primary">Save changes</button></div></form>` : multiMode ? `<div class="cache-card"><div><b>${currentUser.allowance?.limit ? `${currentUser.allowance.remaining} of ${currentUser.allowance.limit} items left` : 'Unlimited requests'}</b><p>${currentUser.allowance?.limit ? `Within a rolling ${currentUser.allowance.windowDays}-day window. ` : ''}${currentUser.autoApprove ? 'Your requests are approved automatically.' : 'Your requests wait for approval.'}</p></div></div>` : `<div class="cache-card"><div><b>Choose the issues or volumes you want</b><p>Mylar searches for selected parts in the background. Follow new issues is a separate ongoing request.</p></div></div>`;
   if (section === 'users') content = `<div class="cache-card"><div><b>Manage individual users</b><p>Edit each person’s permissions and request limit on the Users page.</p></div><a class="secondary" href="#/users">Manage users</a></div><form id="request-policy-form" data-policy-section="users" class="settings-form">
     <div class="form-row"><div><b>Default permissions</b><p>Applied to new accounts. Existing accounts keep their individual permissions.</p></div>${permissionChoices(policy.defaultPermissions, 'defaultPermissions')}</div><div class="form-actions"><button class="primary">Save changes</button></div></form>`;
-  if (section === 'account') content = `<div class="cache-card"><div><b>${esc(currentUser.displayName)}</b><p>Change your password or sign out.</p></div><button class="secondary" data-account>Account settings</button></div>`;
+  if (section === 'account') content = accountSettingsHtml();
+  if (section === 'access') {
+    if (!multiMode) content = `<div class="cache-card"><div><b>Shared access</b><p>${installationSetup?.authentication === 'basic' ? 'Everyone uses the same shared sign-in.' : 'Anyone on your trusted LAN can use this installation.'} Set up an administrator account to choose Personal or Friends mode, and manage sign-in details here.</p></div><button class="primary" data-setup-accounts>Set up accounts</button></div>`;
+    else content = `<form id="access-mode-form" class="account-form access-settings-card"><h2>Who can use Inkwell?</h2><p>Both modes keep administrator sign-in enabled.</p><fieldset class="access-mode-choices"><legend>Access mode</legend><label class="request-scope"><input type="radio" name="mode" value="personal"${!friendsMode() ? ' checked' : ''} /><span><b>Personal</b><small>Only administrators can sign in. Friends’ accounts are kept for when you switch back.</small></span></label><label class="request-scope"><input type="radio" name="mode" value="friends"${friendsMode() ? ' checked' : ''} /><span><b>Friends</b><small>Add friends, choose their permissions, and review their requests.</small></span></label></fieldset><p>Switching modes signs friends out. Accounts, permissions, and request history are preserved. Already approved requests and follows keep processing.</p><label>Current administrator password<input type="password" name="currentPassword" autocomplete="current-password" required /></label><p class="account-form-error" role="alert" hidden></p><button class="primary">Save access mode</button></form><div class="cache-card"><div><b>Your sign-in details</b><p>Change your username, display name, or password.</p></div><a class="secondary" href="#/settings/account">Edit your account</a></div>`;
+  }
   if (section === 'connections') {
     const [health, mylarSettings] = await Promise.all([api('/api/health').catch(() => null), api('/api/mylar/settings').catch(() => null)]);
     const cache = health?.cache || {};
     const enrich = health?.enrichment || cache.enrichment || {};
     content = `<div class="connection-grid" id="connections">${connectionsHtml(health)}</div>${mylarSettingsForm(mylarSettings)}<div class="settings-subheading"><h2>Local catalogue ${info('local catalogue')}</h2><p>${(cache.volumes || 0).toLocaleString()} volumes · ${(cache.objects || 0).toLocaleString()} people & things · ${(cache.covers || 0).toLocaleString()} covers</p></div><div class="cache-card"><div><b>Saved as you browse</b><p>Repeat searches use the local catalogue first. ${enrich.pending || 0} titles waiting for enrichment · ${enrich.done || 0} enriched.</p></div><button class="secondary" data-clear-cache>Clear response cache</button></div><p class="settings-note">Clearing response cache keeps accounts, requests, catalogue relationships, and Mylar settings.</p>`;
   }
-  const descriptions = { general: 'Display preferences are saved on this device.', requests: 'Request limits and approval policy.', users: 'Permissions for new accounts.', connections: 'Service connections, Mylar request settings, and catalogue diagnostics.', account: 'Your sign-in and account details.' };
+  const descriptions = { access: 'Choose Personal or Friends mode and manage administrator access.', general: 'Display preferences are saved on this device.', requests: 'Request limits and approval policy.', users: 'Permissions for new accounts.', connections: 'Service connections, Mylar request settings, and catalogue diagnostics.', account: 'Your sign-in and account details.' };
   view.innerHTML = `<div class="management-page settings-page"><div class="page-heading"><div><h1>Settings</h1><p>${descriptions[section]}</p></div></div><nav class="page-tabs" aria-label="Settings sections">${tabs.map(([value, label]) => `<a href="#/settings/${value}" aria-current="${section === value ? 'page' : 'false'}">${label}</a>`).join('')}</nav><section class="settings-content">${content}</section></div>`;
 };
 
@@ -2280,7 +2310,7 @@ function userTableRows(users) {
 }
 
 routes.users = async () => {
-  if (!multiMode || !canDo('manage_users')) return go('/settings');
+  if (!multiMode || !friendsMode() || !canDo('manage_users')) return go('/settings/access');
   const { items } = await api('/api/users');
   usersOnPage = items;
   view.innerHTML = `<div class="management-page users-page"><div class="page-heading"><div><h1>Users</h1><p>Manage accounts, permissions, and individual request limits.</p></div><div class="page-actions"><button class="secondary" data-invite-modal>Invite user</button><button class="primary" data-create-user>Create user</button></div></div><div class="list-toolbar"><label class="list-search">Search users<input type="search" data-user-search placeholder="Name or username" /></label>${currentUser.role === 'admin' ? '<a class="secondary" href="#/settings/users">Default permissions</a>' : ''}<span class="list-count" data-user-count>${items.length} users</span></div><div class="user-table-wrap"><table class="user-table"><thead><tr><th>User</th><th>Status</th><th>Permissions</th><th>Request limit</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="user-rows">${userTableRows(items)}</tbody></table></div><p class="management-note">Edit a user to set permissions or override the default request limit. Disabling an account ends its sessions.</p></div>`;
@@ -2294,13 +2324,13 @@ function openUserEditor(id) {
     <nav class="page-tabs" aria-label="User settings"><button type="button" data-user-tab="permissions" aria-current="page">Permissions</button><button type="button" data-user-tab="limits" aria-current="false">Request limit</button><button type="button" data-user-tab="account" aria-current="false">Account</button></nav>
     <section data-user-panel="permissions">${fixed ? '<p>Administrators have every permission.</p>' : permissionChoices(user.permissions, 'permissions')}</section>
     <section data-user-panel="limits" hidden><label class="field-label">Item limit override<input name="requestLimitOverride" type="number" min="0" max="10000" value="${user.requestLimitOverride ?? ''}" placeholder="Inherit default"${fixed ? ' disabled' : ''} /></label><p class="management-note">Leave blank to inherit the default. 0 means unlimited. The installation’s rolling window applies.</p><p>${user.allowance.used} items used in the last ${user.allowance.windowDays} days.</p></section>
-    <section data-user-panel="account" hidden><div class="account-state"><div><b>${user.active ? 'Active account' : 'Disabled account'}</b><p>Disabling this account ends its sessions. Ongoing follows need separate review in Requests.</p></div><button type="button" class="secondary" data-user-status="${user.id}" data-active="${user.active ? 'false' : 'true'}">${user.active ? 'Disable account' : 'Enable account'}</button></div></section>
+    <section data-user-panel="account" hidden><div class="account-state"><div><b>${user.active ? 'Active account' : 'Disabled account'}</b><p>Disabling this account ends its sessions. Ongoing follows need separate review in Requests.</p></div><button type="button" class="secondary" data-user-status="${user.id}" data-active="${user.active ? 'false' : 'true'}">${user.active ? 'Disable account' : 'Enable account'}</button></div>${currentUser.role === 'admin' && !fixed ? `<div class="account-state"><b>Password recovery</b><p>Set a replacement password if this friend cannot sign in. Their sessions will end; no email is sent.</p><button type="button" class="secondary" data-reset-user-password="${user.id}">Reset password</button></div>` : ''}</section>
     <div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button>${fixed ? '' : '<button class="primary">Save changes</button>'}</div></form>`);
 }
 
 async function openCreateUser() {
   const defaults = currentUser.role === 'admin' ? (await api('/api/request-policy')).defaultPermissions : ['request'].filter(canDo);
-  openAdminDialog('Create user', `<p class="modal-description">Create a local account. Your friend can change their password after signing in.</p><form id="create-user-form" class="account-form modal-form"><div class="field-pair"><label>Display name<input name="displayName" maxlength="80" autocomplete="off" /></label><label>Username<input name="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9_.-]+" autocomplete="off" required /></label></div><label>Password<input name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required /><small>At least 12 characters.</small></label><fieldset><legend>Permissions</legend>${permissionChoices(defaults, 'permissions')}</fieldset><label>Request limit override<input name="requestLimitOverride" type="number" min="0" max="10000" placeholder="Inherit default" /><small>Leave blank to inherit the default. 0 means unlimited.</small></label><div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button><button class="primary">Create user</button></div></form>`);
+  openAdminDialog('Create user', `<p class="modal-description">Create a local account. Your friend can change their password after signing in.</p><form id="create-user-form" class="account-form modal-form"><div class="field-pair"><label>Display name<input name="displayName" maxlength="80" autocomplete="off" /></label><label>Username<input name="username" minlength="3" maxlength="40" pattern="[a-zA-Z0-9_.-]+" autocomplete="off" required /></label></div>${passwordField('password')}<fieldset><legend>Permissions</legend>${permissionChoices(defaults, 'permissions')}</fieldset><label>Request limit override<input name="requestLimitOverride" type="number" min="0" max="10000" placeholder="Inherit default" /><small>Leave blank to inherit the default. 0 means unlimited.</small></label><div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button><button class="primary">Create user</button></div></form>`);
 }
 
 let requestModal = null;
@@ -2763,16 +2793,16 @@ document.addEventListener('submit', async (event) => {
     try {
       const result = await api('/api/setup/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         username: values.get('username'), displayName: values.get('displayName'), password: values.get('password'),
-        acknowledgePrivateHttp: values.has('acknowledgePrivateHttp'),
+        acknowledgePrivateHttp: values.has('acknowledgePrivateHttp'), mode: values.get('mode'),
       }) });
       currentUser = result.user; installationSetup = result.setup; multiMode = true;
-      go('/setup');
+      go(result.setup.completed ? '/settings/access' : '/setup');
     } catch (error) {
       errorBox.textContent = error.message; errorBox.hidden = false;
       button.disabled = false; button.textContent = 'Create administrator';
       // Another browser may have claimed the server while this form was open.
       const setup = await api('/api/setup').catch(() => null);
-      if (setup && !setup.accountSetupRequired) { installationSetup = setup; go('/login'); }
+      if (setup?.accessMode === 'multi' && !setup.accountSetupRequired) { installationSetup = setup; go('/login'); }
     }
     return;
   }
@@ -2851,11 +2881,39 @@ document.addEventListener('submit', async (event) => {
     } catch (error) { submit.disabled = false; toast(error.message, 'error'); }
     return;
   }
+  if (['profile-form', 'access-mode-form', 'reset-user-password-form'].includes(form.id)) {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    const errorBox = form.querySelector('.account-form-error'); errorBox.hidden = true;
+    if (form.id === 'reset-user-password-form' && data.newPassword !== data.confirmPassword) {
+      errorBox.textContent = 'The passwords do not match.'; errorBox.hidden = false; return;
+    }
+    delete data.confirmPassword;
+    const button = form.querySelector('button.primary'); button.disabled = true;
+    try {
+      if (form.id === 'profile-form') {
+        const result = await api('/api/me/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        if (result.reauthenticate) { currentUser = null; toast('Username changed. Sign in with your new username.'); go('/login'); }
+        else { currentUser = result.user; toast('Profile saved.'); render(); }
+      } else if (form.id === 'access-mode-form') {
+        const result = await api('/api/access/mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        installationSetup = result.setup; toast(data.mode === 'personal' ? 'Personal mode enabled.' : 'Friends mode enabled.'); render();
+      } else {
+        await api(`/api/users/${form.dataset.userId}/password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+        adminDialog.close(); toast('Password reset. Share the new password with your friend.'); await routes.users();
+      }
+    } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; button.disabled = false; }
+    return;
+  }
   if (!['login-form', 'invite-form', 'password-form'].includes(form.id)) return;
   event.preventDefault();
   const submit = form.querySelector('button[type="submit"], button.primary');
   submit.disabled = true;
   const data = Object.fromEntries(new FormData(form));
+  if (form.id === 'password-form' && data.newPassword !== data.confirmPassword) {
+    const errorBox = form.querySelector('.account-form-error'); errorBox.textContent = 'The passwords do not match.'; errorBox.hidden = false; submit.disabled = false; return;
+  }
+  delete data.confirmPassword;
   try {
     if (form.id === 'password-form') {
       await api('/api/auth/password', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2874,11 +2932,20 @@ document.addEventListener('submit', async (event) => {
     }
   } catch (error) {
     submit.disabled = false;
-    toast(error.message, 'error');
+    const errorBox = form.querySelector('.account-form-error');
+    if (errorBox) { errorBox.textContent = error.message; errorBox.hidden = false; } else toast(error.message, 'error');
   }
 });
 
 document.addEventListener('click', async (event) => {
+  if (event.target.closest('[data-setup-accounts]')) return go('/setup-account');
+  const resetPassword = event.target.closest('[data-reset-user-password]');
+  if (resetPassword) {
+    const user = usersOnPage.find((item) => String(item.id) === resetPassword.dataset.resetUserPassword);
+    if (!user) return;
+    openAdminDialog(`Reset ${user.display_name}’s password`, `<p class="modal-description">The user will be signed out on every device. Share the replacement password directly.</p><form id="reset-user-password-form" data-user-id="${user.id}" class="account-form modal-form"><label>Your administrator password<input name="currentPassword" type="password" autocomplete="current-password" required /></label>${passwordField('newPassword', 'New password for this user')}<label>Confirm new password<input name="confirmPassword" type="password" minlength="5" maxlength="256" autocomplete="new-password" required /></label><p class="account-form-error" role="alert" hidden></p><div class="form-actions"><button type="button" class="secondary" data-close-admin>Cancel</button><button class="primary">Reset password</button></div></form>`);
+    return;
+  }
   if (event.target.closest('[data-mylar-recommended]')) {
     const form = document.querySelector('#mylar-settings-form');
     form.querySelector('[name="autoWantAll"]').checked = false;
@@ -3020,7 +3087,7 @@ document.addEventListener('click', async (event) => {
         body: JSON.stringify({ acknowledgeTrustedLan: Boolean(acknowledge?.checked) }),
       });
       installationSetup = null;
-      go(multiMode && canDo('manage_users') ? '/users' : '/discover');
+      go(multiMode && friendsMode() && canDo('manage_users') ? '/users' : '/discover');
       toast('Inkwell is ready.');
     } catch (error) {
       completeSetup.disabled = false;
@@ -3371,6 +3438,12 @@ document.querySelector('#search-form').addEventListener('submit', (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.matches('[data-password-meter]')) {
+    const meter = event.target.closest('.password-field').querySelector('[data-password-strength]');
+    const strength = event.target.value ? passwordStrength(event.target.value) : { level: 0, label: 'Enter a password' };
+    meter.dataset.level = String(strength.level);
+    meter.querySelector('[data-strength-label]').textContent = strength.label;
+  }
   if (event.target.matches('[data-request-search]')) filterRequestList();
   if (event.target.matches('[data-user-search]')) {
     const query = event.target.value.trim().toLowerCase();

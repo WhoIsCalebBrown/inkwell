@@ -81,12 +81,13 @@ is needed. Complete setup privately before sharing the address.
 
 Existing installations retain their access mode on upgrade. Shared single-user
 mode lets anyone with access queue books, cancel them, and untrack a series.
-Set `INKWELL_ACCESS_MODE=multi` to enable the browser account wizard on an
-existing single-user install. See [account setup](docs/multi-user.md).
+Use **Settings → Access → Set up accounts** to choose administrator credentials
+and Personal or Friends mode on an existing install. Change your username and
+password in **Settings → Your account**. See [account setup](docs/multi-user.md).
 
 - In single-user mode, set `INKWELL_USER` and `INKWELL_PASSWORD` to put it behind
-  shared HTTP Basic auth. These credentials are only an outer gate in multi-user
-  mode; they do not grant an Inkwell account or role.
+  shared HTTP Basic auth. This shared gate retires when individual accounts are
+  enabled; Personal and Friends modes both require account sign-in.
 - Requests that change something must carry a header Inkwell's own pages send.
   A form on another site cannot set one, and a script that tries triggers a
   preflight Inkwell never answers — so a page you happen to be visiting cannot
