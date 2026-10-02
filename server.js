@@ -28,7 +28,8 @@ import {
   changeProposal, markPart, markAttention, changePassword, listUsers, setUserActive,
   managedFollow, markManagedFollow, markManagedPaused, activeFollows, activePartRequests, requestFollowStop,
   activeFutureFollows, setFutureCutoff, claimFutureDispatch, finishFutureDispatch, futureDispatches, retryFutureDispatch,
-  can, requestPolicy, setRequestPolicy, setUserPermissions,
+  can, requestPolicy, setRequestPolicy, setUserPermissions, userMode, setUserMode,
+  updateProfile, resetUserPassword,
 } from './membership.js';
 
 const app = express();
@@ -104,11 +105,15 @@ if (fs.existsSync(envFile)) {
 const requestedAccessMode = process.env.INKWELL_ACCESS_MODE || 'auto';
 if (!['auto', 'single', 'multi'].includes(requestedAccessMode)) throw new Error('INKWELL_ACCESS_MODE must be auto, single or multi.');
 const savedInstallation = readSetting('installation');
-const effectiveAccessMode = requestedAccessMode === 'auto'
-  ? (savedInstallation?.accessMode || (userCount() || readSetting('owner_claimed') ? 'multi' : savedInstallation?.completedAt ? 'single' : 'multi'))
-  : requestedAccessMode;
-const multiUser = effectiveAccessMode === 'multi';
+const accountStateExists = () => Boolean(userCount() || readSetting('owner_claimed') || readSetting('installation')?.accessMode === 'multi');
+let effectiveAccessMode = accountStateExists() ? 'multi' : requestedAccessMode === 'auto'
+  ? (savedInstallation?.completedAt ? 'single' : 'multi') : requestedAccessMode;
+let multiUser = effectiveAccessMode === 'multi';
 const accountSetupRequired = () => multiUser && userCount() === 0 && !readSetting('owner_claimed');
+// A completed shared-LAN installation can elect to add its first account from
+// Settings. It is deliberately a separate state from a fresh account install:
+// old installs keep working until their owner makes that choice.
+const accountUpgradeAvailable = () => !multiUser && userCount() === 0 && !readSetting('owner_claimed');
 // Express does not trust X-Forwarded-* headers unless this explicit list is
 // configured. Most of Inkwell does not need forwarded headers today, but this
 // keeps a future proxy-aware feature from accidentally trusting every client.
@@ -249,7 +254,8 @@ function setupStatus(req = null) {
   const comicVineCredential = Boolean(process.env.COMICVINE_API_KEY?.trim() || mylarConfigValue('comicvine_api'));
   const installation = readSetting('installation');
   const configurationReady = comicVineCredential && mylarCredential && Boolean(mylarUrl);
-  const transport = accountSetupRequired() && req ? insecureAccountTransport(req) : null;
+  const accountClaimAvailable = accountSetupRequired() || accountUpgradeAvailable();
+  const transport = accountClaimAvailable && req ? insecureAccountTransport(req) : null;
   return {
     firstRun: !installation?.completedAt,
     completed: Boolean(installation?.completedAt),
@@ -258,8 +264,10 @@ function setupStatus(req = null) {
     mylarConfig: { readable: mountedMylarConfig },
     authentication: multiUser ? 'accounts' : authUser && authPassword ? 'basic' : 'trusted-lan',
     accessMode: effectiveAccessMode,
+    userMode: userMode(),
     accountSetupRequired: accountSetupRequired(),
-    accountSetupAllowed: transport ? transport.allowed || transport.needsAcknowledgement : !accountSetupRequired(),
+    accountUpgradeAvailable: accountUpgradeAvailable(),
+    accountSetupAllowed: transport ? transport.allowed || transport.needsAcknowledgement : !accountClaimAvailable,
     needsPrivateHttpAcknowledgement: Boolean(transport?.needsAcknowledgement),
     accountSetupReason: transport?.reason ?? null,
     ready: configurationReady,
@@ -889,6 +897,9 @@ const sameSecret = (given, expected) => {
 if (authUser && authPassword) {
   const failedAuth = new Map();
   app.use((req, res, next) => {
+    // Environment Basic auth protects the legacy shared UI only. Once an
+    // owner enables accounts, keeping it would make the account login unusable.
+    if (multiUser) return next();
     if (req.path === '/api/ready') return next();
     const now = Date.now();
     const key = req.ip || req.socket.remoteAddress || 'unknown';
@@ -939,7 +950,8 @@ app.use((req, res, next) => {
 // explain what is missing; account creation is the only unauthenticated setup write.
 app.use((req, res, next) => {
   if (!WRITES.has(req.method) || ['/api/setup/complete', '/api/setup/admin'].includes(req.path)
-      || (multiUser && ['/api/auth/login', '/api/auth/invite/accept', '/api/auth/logout'].includes(req.path))) return next();
+      || (multiUser && ['/api/auth/login', '/api/auth/invite/accept', '/api/auth/logout', '/api/auth/password',
+        '/api/me/profile', '/api/access/mode'].includes(req.path)) ) return next();
   if (setupStatus().completed) return next();
   return res.status(428).json({
     error: 'Finish Inkwell setup before making changes.',
@@ -950,6 +962,23 @@ app.use((req, res, next) => {
 // requester allowlist keeps new Mylar controls admin-only by default.
 const loginFailures = new Map();
 const ownerAttempts = new Map();
+const credentialAttempts = new Map();
+function beginCredentialAttempt(attempts, req, message = 'Too many sign-in attempts. Try again later.') {
+  const now = Date.now();
+  // Bound by live windows rather than every address ever seen. Otherwise a
+  // scanner that touches 1,024 source addresses once could permanently deny
+  // all later sign-ins after its five-minute entries should have expired.
+  for (const [address, values] of attempts) {
+    const active = values.filter((at) => now - at < 5 * 60_000);
+    if (active.length) attempts.set(address, active);
+    else attempts.delete(address);
+  }
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (attempts.get(key) || []).filter((at) => now - at < 5 * 60_000);
+  if (recent.length >= 8 || (!attempts.has(key) && attempts.size >= 1024)) return { error: message };
+  attempts.set(key, [...recent, now]);
+  return { key };
+}
 const requesterRead = [
   /^\/api\/(?:search|threads|threads\/browse|threads\/seeded\/[^/]+|publishers|formats|decades|lines)\/?$/,
   /^\/api\/(?:thread|publisher|decade)\//,
@@ -994,37 +1023,43 @@ app.use((req, res, next) => {
   if (!req.member) return res.status(401).json({ error: 'Sign in to Inkwell.', code: 'login_required' });
   if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account access requires HTTPS outside a direct private network.' });
   if (req.member.role === 'admin') return next();
-  if (['/api/me', '/api/auth/logout', '/api/auth/password', '/api/proposals'].includes(req.path)) return next();
+  if (userMode() === 'personal' && req.path !== '/api/auth/logout') {
+    return res.status(403).json({ error: 'Personal mode does not allow requester accounts.' });
+  }
+  if (['/api/me', '/api/me/profile', '/api/auth/logout', '/api/auth/password', '/api/proposals'].includes(req.path)) return next();
   if (can(req.member, 'manage_users') && (req.path === '/api/users' || req.path === '/api/invitations'
-    || /^\/api\/users\/\d+\/(?:status|permissions)$/.test(req.path))) return next();
+    || /^\/api\/users\/\d+\/(?:status|permissions|password)$/.test(req.path))) return next();
   if (/^\/api\/proposals\/\d+(?:\/(?:withdraw|stop-request))?$/.test(req.path)) return next();
   if (can(req.member, 'manage_requests') && /^\/api\/proposals\/\d+\/(?:approve|reject|retry|stop|future\/\d+\/retry)$/.test(req.path)) return next();
   if (req.method === 'GET' && requesterRead.some((pattern) => pattern.test(req.path))) return next();
   return res.status(403).json({ error: 'Only an administrator can use that control.' });
 });
 
-app.get('/api/me', (req, res) => res.json({ user: multiUser ? publicUser(req.member) : null, accessMode: multiUser ? 'multi' : 'single' }));
+app.get('/api/me', (req, res) => res.json({ user: multiUser ? publicUser(req.member) : null,
+  accessMode: multiUser ? 'multi' : 'single', userMode: userMode() }));
 app.post('/api/auth/login', async (req, res, next) => {
   if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
   if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account sign-in requires HTTPS.' });
-  const key = req.ip || req.socket.remoteAddress || 'unknown';
-  const recent = (loginFailures.get(key) || []).filter((at) => Date.now() - at < 5 * 60_000);
-  if (recent.length >= 8) return res.status(429).json({ error: 'Too many sign-in attempts. Try again later.' });
+  const attempt = beginCredentialAttempt(loginFailures, req);
+  if (attempt.error) return res.status(429).json({ error: attempt.error });
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)
+      || Object.keys(req.body).some((key) => !['username', 'password'].includes(key))
+      || typeof req.body.username !== 'string' || typeof req.body.password !== 'string') {
+    return res.status(400).json({ error: 'Enter a username and password.' });
+  }
   try {
     const user = await authenticate(req.body?.username, req.body?.password);
     if (!user) {
-      loginFailures.set(key, [...recent, Date.now()]);
       return res.status(401).json({ error: 'Incorrect username or password.' });
     }
-    loginFailures.delete(key);
+    loginFailures.delete(attempt.key);
     const session = newSession(user.id);
     setSessionCookie(req, res, session.token, session.maxAge);
     res.json({ user: publicUser(user) });
   } catch (error) { next(error); }
 });
 app.post('/api/setup/admin', async (req, res) => {
-  if (!multiUser) return res.status(409).json({ error: 'Account setup is disabled by the selected access mode.' });
-  if (!accountSetupRequired()) return res.status(409).json({ error: 'This installation already has an account.' });
+  if (!accountSetupRequired() && !accountUpgradeAvailable()) return res.status(409).json({ error: 'This installation already has an account.' });
   const transport = insecureAccountTransport(req);
   const acknowledge = req.body?.acknowledgePrivateHttp === true;
   const allowPrivateHttp = transport.needsAcknowledgement && acknowledge && privateDirectConnection(req);
@@ -1045,14 +1080,19 @@ app.post('/api/setup/admin', async (req, res) => {
   ownerAttempts.set(key, [...recent, now]);
   const body = req.body;
   if (!body || typeof body !== 'object' || Array.isArray(body)
-      || Object.keys(body).some((field) => !['username', 'displayName', 'password', 'acknowledgePrivateHttp'].includes(field))
+      || Object.keys(body).some((field) => !['username', 'displayName', 'password', 'acknowledgePrivateHttp', 'mode'].includes(field))
       || typeof body.username !== 'string' || typeof body.password !== 'string'
       || (body.displayName !== undefined && typeof body.displayName !== 'string')
-      || (body.acknowledgePrivateHttp !== undefined && typeof body.acknowledgePrivateHttp !== 'boolean')) {
+      || (body.acknowledgePrivateHttp !== undefined && typeof body.acknowledgePrivateHttp !== 'boolean')
+      || (body.mode !== undefined && !['personal', 'friends'].includes(body.mode))) {
     return res.status(400).json({ error: 'Enter a username and password using the setup form.' });
   }
   try {
-    const admin = await createFirstAdmin(body.username, body.displayName, body.password, { allowPrivateHttp });
+    const admin = await createFirstAdmin(body.username, body.displayName, body.password, { allowPrivateHttp, userMode: body.mode || 'friends' });
+    // A legacy install changes guards in this request, after the membership
+    // transaction succeeds. Subsequent requests use sessions immediately.
+    effectiveAccessMode = 'multi';
+    multiUser = true;
     const session = newSession(admin.id);
     setSessionCookie(req, res, session.token, session.maxAge);
     res.status(201).json({ user: publicUser(admin), setup: setupStatus(req) });
@@ -1066,10 +1106,58 @@ app.post('/api/auth/logout', (req, res) => {
 app.post('/api/auth/password', async (req, res) => {
   if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
   if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Password changes require HTTPS.' });
+  const attempt = beginCredentialAttempt(credentialAttempts, req, 'Too many password attempts. Try again later.');
+  if (attempt.error) return res.status(429).json({ error: attempt.error });
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)
+      || Object.keys(req.body).some((key) => !['currentPassword', 'newPassword'].includes(key))
+      || typeof req.body.currentPassword !== 'string' || typeof req.body.newPassword !== 'string') return res.status(400).json({ error: 'Enter your current and new password.' });
   try {
     await changePassword(req.member.id, req.body?.currentPassword, req.body?.newPassword);
+    credentialAttempts.delete(attempt.key);
     setSessionCookie(req, res, '', 0);
     res.json({ ok: true, message: 'Password changed. Sign in again.' });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.patch('/api/me/profile', async (req, res) => {
+  if (!multiUser) return res.status(404).json({ error: 'Accounts are not enabled.' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account changes require HTTPS.' });
+  const attempt = beginCredentialAttempt(credentialAttempts, req, 'Too many account attempts. Try again later.');
+  if (attempt.error) return res.status(429).json({ error: attempt.error });
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['currentPassword', 'username', 'displayName'].includes(key))
+      || typeof body.currentPassword !== 'string' || typeof body.username !== 'string'
+      || (body.displayName !== undefined && typeof body.displayName !== 'string')) {
+    return res.status(400).json({ error: 'Enter your current password and account details.' });
+  }
+  try {
+    const result = await updateProfile(req.member.id, body.currentPassword, body);
+    credentialAttempts.delete(attempt.key);
+    if (result.reauthenticate) setSessionCookie(req, res, '', 0);
+    res.json(result);
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.get('/api/access', (req, res) => {
+  if (multiUser && req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  const setup = setupStatus(req);
+  res.json({ accessMode: effectiveAccessMode, userMode: userMode(), accountUpgradeAvailable: accountUpgradeAvailable(),
+    accountSetupAllowed: setup.accountSetupAllowed, needsPrivateHttpAcknowledgement: setup.needsPrivateHttpAcknowledgement,
+    accountSetupReason: setup.accountSetupReason });
+});
+app.post('/api/access/mode', async (req, res) => {
+  if (!multiUser || req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account changes require HTTPS.' });
+  const attempt = beginCredentialAttempt(credentialAttempts, req, 'Too many account attempts. Try again later.');
+  if (attempt.error) return res.status(429).json({ error: attempt.error });
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['mode', 'currentPassword'].includes(key))
+      || !['personal', 'friends'].includes(body.mode) || typeof body.currentPassword !== 'string') {
+    return res.status(400).json({ error: 'Choose Personal or Friends mode and enter your current password.' });
+  }
+  try {
+    await setUserMode(req.member.id, body.currentPassword, body.mode);
+    credentialAttempts.delete(attempt.key);
+    res.json({ setup: setupStatus(req) });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 app.post('/api/auth/invite/accept', async (req, res) => {
@@ -1109,6 +1197,20 @@ app.post('/api/users/:id/permissions', (req, res) => {
   if (!multiUser || !can(req.member, 'manage_users')) return res.status(403).json({ error: 'Manage users permission required.' });
   try { res.json(setUserPermissions(req.params.id, req.member.id, req.body?.permissions, req.body?.requestLimitOverride)); }
   catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post('/api/users/:id/password', async (req, res) => {
+  if (!multiUser || req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
+  if (!insecureAccountTransport(req).allowed) return res.status(403).json({ error: 'Account changes require HTTPS.' });
+  const attempt = beginCredentialAttempt(credentialAttempts, req, 'Too many password attempts. Try again later.');
+  if (attempt.error) return res.status(429).json({ error: attempt.error });
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['currentPassword', 'newPassword'].includes(key))
+      || typeof body.currentPassword !== 'string' || typeof body.newPassword !== 'string') return res.status(400).json({ error: 'Enter your current password and a replacement password.' });
+  try {
+    await resetUserPassword(req.member.id, req.params.id, body.currentPassword, body.newPassword);
+    credentialAttempts.delete(attempt.key);
+    res.json({ ok: true });
+  } catch (error) { res.status(400).json({ error: error.message }); }
 });
 app.get('/api/request-policy', (req, res) => {
   if (!multiUser || req.member?.role !== 'admin') return res.status(403).json({ error: 'Admin account required.' });
@@ -1195,10 +1297,16 @@ app.post('/api/proposals', async (req, res) => {
     if (req.member.role === 'admin' || can(req.member, 'auto_approve') || requestPolicy().autoApprove) {
       const gate = await approvalGate(row);
       if (!gate) {
-        const sending = changeProposal(changeProposal(row.id, 'pending', 'approved', req.member.id).id,
-          'approved', 'dispatching', req.member.id);
-        try { await dispatchProposal(sending); }
-        catch (error) { markAttention(row.id, error.message); }
+        // The Mylar safety read can take long enough for an administrator to
+        // change this account or switch to Personal mode. Re-read both the
+        // active session and the current policy before the first write.
+        const actor = currentAutoApprover(req);
+        if (actor) {
+          const sending = changeProposal(changeProposal(row.id, 'pending', 'approved', actor.id).id,
+            'approved', 'dispatching', actor.id);
+          try { await dispatchProposal(sending); }
+          catch (error) { markAttention(row.id, error.message); }
+        }
       }
     }
     res.status(201).json(visibleProposal(proposal(row.id), req.member));
@@ -1300,15 +1408,31 @@ async function approvalGate(row) {
   return null;
 }
 
+// Permission changes and Personal mode revoke sessions in SQLite. Re-read the
+// session after a slow Mylar check, before changing a proposal or queueing it.
+function currentRequestManager(req) {
+  const member = sessionUser(sessionCookie(req));
+  return member && (member.role === 'admin' || (userMode() === 'friends' && can(member, 'manage_requests'))) ? member : null;
+}
+function currentAutoApprover(req) {
+  const member = sessionUser(sessionCookie(req));
+  if (!member) return null;
+  if (member.role === 'admin') return member;
+  if (userMode() !== 'friends' || !can(member, 'request')) return null;
+  return can(member, 'auto_approve') || requestPolicy().autoApprove ? member : null;
+}
+
 app.post('/api/proposals/:id/approve', async (req, res) => {
   if (!can(req.member, 'manage_requests')) return res.status(403).json({ error: 'Manage requests permission required.' });
   const row = proposal(req.params.id);
   if (!row) return res.status(404).json({ error: 'Request not found.' });
   const gate = await approvalGate(row);
   if (gate) return res.status(gate.status).json({ error: gate.error });
+  const actor = currentRequestManager(req);
+  if (!actor) return res.status(403).json({ error: 'Your request permission changed. Refresh and sign in again.' });
   try {
-    const approved = changeProposal(row.id, 'pending', 'approved', req.member.id);
-    const sending = changeProposal(row.id, 'approved', 'dispatching', req.member.id);
+    const approved = changeProposal(row.id, 'pending', 'approved', actor.id);
+    const sending = changeProposal(row.id, 'approved', 'dispatching', actor.id);
     try { await dispatchProposal(sending); }
     catch (error) { markAttention(row.id, error.message); }
     res.json(visibleProposal(proposal(approved.id), req.member));
@@ -1327,8 +1451,10 @@ app.post('/api/proposals/:id/retry', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Request not found.' });
   const gate = await approvalGate(row);
   if (gate) return res.status(gate.status).json({ error: gate.error });
+  const actor = currentRequestManager(req);
+  if (!actor) return res.status(403).json({ error: 'Your request permission changed. Refresh and sign in again.' });
   try {
-    const sending = changeProposal(row.id, 'attention', 'dispatching', req.member.id);
+    const sending = changeProposal(row.id, 'attention', 'dispatching', actor.id);
     try { await dispatchProposal(sending); }
     catch (error) { markAttention(row.id, error.message); }
     res.json(visibleProposal(proposal(row.id), req.member));
@@ -1344,6 +1470,8 @@ app.post('/api/proposals/:id/future/:issueId/retry', async (req, res) => {
   if (previous?.state !== 'sending') return res.status(409).json({ error: 'This release does not need a retry.' });
   try {
     const collection = await mylarParts(row.volume_id, { refresh: true });
+    const actor = currentRequestManager(req);
+    if (!actor) return res.status(403).json({ error: 'Your request permission changed. Refresh and sign in again.' });
     const part = collection.parts.find((part) => part.id === String(req.params.issueId));
     const releaseDay = validReleaseDay(part?.releaseDate);
     if (!part || !releaseDay || releaseDay <= row.future_cutoff_day || releaseDay > utcDay()

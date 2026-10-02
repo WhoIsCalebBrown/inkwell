@@ -12,7 +12,7 @@ try {
   const username = await rl.question('Admin username: ');
   const displayName = await rl.question('Display name (optional): ');
   execFileSync('stty', ['-echo'], { stdio: ['inherit', 'ignore', 'inherit'] });
-  const password = await rl.question('Password (12+ characters): ');
+  const password = await rl.question('Password (5–256 characters): ');
   execFileSync('stty', ['echo'], { stdio: ['inherit', 'ignore', 'inherit'] });
   stdout.write('\n');
   await createFirstAdmin(username, displayName, password);

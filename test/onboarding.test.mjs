@@ -195,7 +195,7 @@ test('owner setup is rate limited before password hashing and a deleted owner re
   const app = await launch(configDir);
   t.after(() => app.stop());
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const response = await call(app.base, '/api/setup/admin', { username: 'no', password: 'short', acknowledgePrivateHttp: false });
+    const response = await call(app.base, '/api/setup/admin', { username: 'no', password: 'four', acknowledgePrivateHttp: false });
     assert.equal(response.status, 400);
   }
   assert.equal((await call(app.base, '/api/setup/admin', {

@@ -20,6 +20,11 @@ const permissionsOf = (user) => {
   } catch { return ['request']; }
 };
 export const can = (user, permission) => Boolean(user && permissionsOf(user).includes(permission));
+const validUserMode = (mode) => {
+  if (!['personal', 'friends'].includes(mode)) throw new Error('Choose personal or friends mode.');
+  return mode;
+};
+export const userMode = () => readSetting('installation')?.userMode || 'friends';
 export function requestPolicy() {
   return { ...DEFAULT_POLICY, ...(readSetting('request_policy') || {}) };
 }
@@ -48,8 +53,8 @@ export function requestAllowance(user) {
 }
 
 export async function hashPassword(password) {
-  if (typeof password !== 'string' || password.length < 12 || password.length > 256) {
-    throw new Error('Choose a password between 12 and 256 characters.');
+  if (typeof password !== 'string' || password.length < 5 || password.length > 256) {
+    throw new Error('Choose a password between 5 and 256 characters.');
   }
   const salt = crypto.randomBytes(16).toString('base64url');
   const key = await scrypt(password, salt, 64, SCRYPT);
@@ -70,9 +75,10 @@ export const publicUser = (user) => user && ({ id: user.id, username: user.usern
   role: user.role, permissions: permissionsOf(user), allowance: requestAllowance(user),
   autoApprove: user.role === 'admin' || can(user, 'auto_approve') || requestPolicy().autoApprove });
 
-export async function createFirstAdmin(username, displayName, password, { allowPrivateHttp = false } = {}) {
+export async function createFirstAdmin(username, displayName, password, { allowPrivateHttp = false, userMode: mode = 'friends' } = {}) {
   const name = String(username || '').trim();
   if (!/^[a-zA-Z0-9_.-]{3,40}$/.test(name)) throw new Error('Username must be 3–40 letters, numbers, dots, dashes or underscores.');
+  const userMode = validUserMode(mode);
   const hash = await hashPassword(password);
   // scrypt yields to the event loop. Claim first-admin status under SQLite's
   // write lock after hashing, so two setup tabs cannot create two owners and
@@ -86,7 +92,7 @@ export async function createFirstAdmin(username, displayName, password, { allowP
     writeSetting('owner_claimed', { at: now });
     const installation = readSetting('installation') || {};
     writeSetting('installation', { ...installation, accessMode: 'multi', accountsCreatedAt: new Date(now).toISOString(),
-      allowPrivateHttp: Boolean(allowPrivateHttp) });
+      allowPrivateHttp: Boolean(allowPrivateHttp), userMode });
     db.exec('COMMIT');
     return db.prepare('SELECT * FROM users WHERE id=?').get(Number(result.lastInsertRowid));
   } catch (error) {
@@ -121,6 +127,7 @@ function validLimitOverride(value) {
 function activeManager(actorId) {
   const actor = db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(Number(actorId));
   if (!can(actor, 'manage_users')) throw new Error('Manage users permission required.');
+  if (userMode() === 'personal' && actor.role !== 'admin') throw new Error('Personal mode does not allow requester accounts.');
   return actor;
 }
 
@@ -132,6 +139,7 @@ function canGrant(actor, permissions) {
 }
 
 export async function createUser(actorId, username, displayName, password, permissions, requestLimitOverride = null) {
+  if (userMode() !== 'friends') throw new Error('Create requester accounts only in friends mode.');
   activeManager(actorId);
   const name = validUsername(username);
   validPermissions(permissions === undefined ? requestPolicy().defaultPermissions : permissions);
@@ -141,6 +149,7 @@ export async function createUser(actorId, username, displayName, password, permi
   // an account disabled or downgraded during that work cannot finish creating
   // an account with its former authority.
   const actor = activeManager(actorId);
+  if (userMode() !== 'friends') throw new Error('Create requester accounts only in friends mode.');
   const granted = validPermissions(permissions === undefined ? requestPolicy().defaultPermissions : permissions);
   canGrant(actor, granted);
   try {
@@ -157,6 +166,7 @@ export async function createUser(actorId, username, displayName, password, permi
 }
 
 export function createInvitation(actorId, role = 'requester') {
+  if (userMode() !== 'friends') throw new Error('Create invitations only in friends mode.');
   if (!['admin', 'requester'].includes(role)) throw new Error('Unknown role.');
   const actor = activeManager(actorId);
   if (role === 'admin' && actor.role !== 'admin') throw new Error('You cannot create this invitation.');
@@ -171,6 +181,7 @@ export function createInvitation(actorId, role = 'requester') {
 }
 
 export async function acceptInvitation(secret, username, displayName, password) {
+  if (userMode() !== 'friends') throw new Error('This installation is in personal mode.');
   const invite = db.prepare('SELECT * FROM invitations WHERE token_hash=?').get(hashToken(String(secret || '')));
   if (!invite || invite.used_at || invite.expires_at < Date.now()) throw new Error('This invitation is invalid or has expired.');
   const name = String(username || '').trim();
@@ -178,6 +189,7 @@ export async function acceptInvitation(secret, username, displayName, password) 
   const hash = await hashPassword(password);
   db.exec('BEGIN IMMEDIATE');
   try {
+    if (userMode() !== 'friends') throw new Error('This installation is in personal mode.');
     const actor = db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(invite.created_by);
     if (!actor || !can(actor, 'manage_users') || (invite.role === 'admin' && actor.role !== 'admin')) {
       throw new Error('This invitation is no longer valid.');
@@ -204,7 +216,11 @@ export async function authenticate(username, password) {
   // Consume comparable work for unknown accounts to reduce username probing.
   const fallback = 'scrypt$invalid$' + Buffer.alloc(64).toString('base64url');
   const valid = await checkPassword(password, user?.password_hash || fallback);
-  return valid ? user : null;
+  if (!valid) return null;
+  const current = db.prepare('SELECT * FROM users WHERE id=? AND active=1 AND password_hash=? AND username=?')
+    .get(user.id, user.password_hash, user.username);
+  if (!current || (userMode() === 'personal' && current.role === 'requester')) return null;
+  return current;
 }
 
 export function newSession(userId) {
@@ -230,9 +246,95 @@ export async function changePassword(userId, current, replacement) {
   const hash = await hashPassword(replacement);
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hash, Number(userId));
+    // Password hashing yields. The original password may have changed, or the
+    // account may have been disabled, before the replacement is ready.
+    const current = db.prepare('SELECT * FROM users WHERE id=? AND active=1 AND password_hash=?')
+      .get(Number(userId), user.password_hash);
+    if (!current) throw new Error('Current password is incorrect.');
+    if (userMode() === 'personal' && current.role === 'requester') {
+      throw new Error('Personal mode does not allow requester accounts.');
+    }
+    db.prepare(`UPDATE users SET password_hash=?
+      WHERE id=? AND active=1 AND password_hash=?`).run(hash, Number(userId), user.password_hash);
     db.prepare('DELETE FROM sessions WHERE user_id=?').run(Number(userId));
     db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export async function updateProfile(userId, currentPassword, { username, displayName } = {}) {
+  const user = db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(Number(userId));
+  if (!user || !await checkPassword(currentPassword, user.password_hash)) {
+    throw new Error('Current password is incorrect.');
+  }
+  const name = validUsername(username);
+  const display = String(displayName ?? user.display_name).trim().slice(0, 80) || name;
+  const renamed = name !== user.username;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // checkPassword uses scrypt and yields. Keep the password check bound to
+    // the exact active account that is about to be changed.
+    const current = db.prepare('SELECT * FROM users WHERE id=? AND active=1 AND password_hash=?')
+      .get(user.id, user.password_hash);
+    if (!current) throw new Error('Current password is incorrect.');
+    if (userMode() === 'personal' && current.role === 'requester') {
+      throw new Error('Personal mode does not allow requester accounts.');
+    }
+    const changed = db.prepare(`UPDATE users SET username=?, display_name=?
+      WHERE id=? AND active=1 AND password_hash=?`)
+      .run(name, display, user.id, user.password_hash);
+    if (!changed.changes) throw new Error('Current password is incorrect.');
+    if (renamed) db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id);
+    db.exec('COMMIT');
+    return { user: publicUser({ ...current, username: name, display_name: display }), reauthenticate: renamed };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    if (/UNIQUE constraint/.test(error.message)) throw new Error('That username is already taken.');
+    throw error;
+  }
+}
+
+export async function resetUserPassword(actorId, targetId, currentPassword, replacement) {
+  const actor = db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND role='admin'").get(Number(actorId));
+  if (!actor) throw new Error('Administrator account required.');
+  if (Number(actorId) === Number(targetId)) throw new Error('Use your own account settings to change your password.');
+  const target = db.prepare('SELECT * FROM users WHERE id=?').get(Number(targetId));
+  if (!target || target.role !== 'requester') throw new Error('Only requester accounts can have their password reset.');
+  if (!await checkPassword(currentPassword, actor.password_hash)) throw new Error('Current password is incorrect.');
+  const hash = await hashPassword(replacement);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const currentActor = db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND role='admin' AND password_hash=?")
+      .get(actor.id, actor.password_hash);
+    if (!currentActor) throw new Error('Current password is incorrect.');
+    const currentTarget = db.prepare("SELECT * FROM users WHERE id=? AND role='requester'").get(target.id);
+    if (!currentTarget) throw new Error('Only requester accounts can have their password reset.');
+    const changed = db.prepare("UPDATE users SET password_hash=? WHERE id=? AND role='requester'")
+      .run(hash, target.id);
+    if (!changed.changes) throw new Error('Only requester accounts can have their password reset.');
+    db.prepare('DELETE FROM sessions WHERE user_id=?').run(target.id);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export async function setUserMode(actorId, currentPassword, mode) {
+  const requested = validUserMode(mode);
+  const actor = db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND role='admin'").get(Number(actorId));
+  if (!actor) throw new Error('Administrator account required.');
+  if (!await checkPassword(currentPassword, actor.password_hash)) throw new Error('Current password is incorrect.');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND role='admin' AND password_hash=?")
+      .get(actor.id, actor.password_hash);
+    if (!current) throw new Error('Current password is incorrect.');
+    const installation = readSetting('installation') || {};
+    if ((installation.userMode || 'friends') === requested) {
+      db.exec('COMMIT');
+      return requested;
+    }
+    writeSetting('installation', { ...installation, userMode: requested });
+    db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE role='requester')").run();
+    db.exec('COMMIT');
+    return userMode();
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 

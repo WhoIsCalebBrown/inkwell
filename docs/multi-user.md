@@ -1,4 +1,4 @@
-# Invited accounts and approval
+# Accounts, access modes, and approval
 
 Fresh installations open a browser setup wizard. You choose the administrator’s
 username and password; there are no default credentials and no email service.
@@ -10,7 +10,7 @@ or selected accounts.
 
 1. Open Inkwell privately on your LAN or through your HTTPS proxy.
 2. Choose an administrator username, optional display name, and password of at
-   least 12 characters. Confirm the password. If using direct private-LAN HTTP,
+   least 5 characters (up to 256). Confirm the password and choose Personal or Friends mode. The strength meter is advisory: Weak, Medium, Strong, or Very strong. Longer, unique passwords are safer. If using direct private-LAN HTTP,
    explicitly acknowledge that passwords are unencrypted. Public HTTP and
    insecure forwarded connections cannot create the first account.
 3. Check the Mylar and ComicVine connections, then finish setup. You can create
@@ -31,15 +31,59 @@ Complete initial setup before publishing the address for others to visit.
 
 ## Upgrading an existing installation
 
-Back up `/config`, which contains accounts and approval history. The default
-`INKWELL_ACCESS_MODE=auto` preserves a completed legacy installation’s shared
-mode. Set it to `multi` and restart to enable accounts; if no account exists,
-the browser opens the same administrator wizard. No terminal command is needed.
-Explicit `single` retains shared trusted-LAN access. The optional
-`create-admin.mjs` utility remains available for terminal-based provisioning.
+Back up `/config`, which contains accounts and approval history. Existing shared
+installs keep working after an image update. Open **Settings → Access → Set up
+accounts**, choose your own administrator username and password, and select
+Personal or Friends mode. The change takes effect immediately; no container
+variable or restart is needed. Existing library state and requests are retained.
 
-The optional shared HTTP Basic credentials remain an outer gate. Everyone who
-passes that gate still needs their own Inkwell account and role.
+Legacy HTTP Basic credentials protect the shared installation until accounts are
+enabled. The shared gate then retires so each person uses their own Inkwell login.
+Once an administrator has been created, account protection persists across
+restarts and image replacements, even if an old template still says `single`.
+The optional `create-admin.mjs` remains available for terminal provisioning.
+
+## Personal and Friends modes
+
+**Settings → Access** lets an administrator change mode using their current
+password. Both modes require administrator sign-in:
+
+- **Personal:** only administrators may sign in. Friends' accounts, permissions,
+  request history, and unexpired invitations are retained. Requester sign-in,
+  new accounts, and invitation redemption are unavailable.
+- **Friends:** invited/requester accounts can sign in with their existing
+  permissions. Add friends from **Users → Create user** or share an invitation.
+
+Changing mode ends friends' sessions; switching back requires a fresh sign-in.
+Saving the already selected mode does not sign anyone out. Already approved
+requests and future-release follows continue processing in either mode. Pending
+requests stay pending. Changing mode never enables anonymous access or resets
+Mylar's settings.
+
+## Editing and recovering accounts
+
+**Settings → Your account** edits your username and display name, or changes your
+password. Both forms verify your current password. A username change or password
+change ends your sessions on every device. Display-name changes preserve sessions.
+The account ID stays the same, so request ownership and history stay intact.
+
+An administrator can use **Users → Edit → Account → Reset password** to set a
+replacement password for a requester. Enter the administrator's current password
+and confirm the replacement, then share it directly. The friend's sessions end.
+Resetting a disabled account does not reactivate it. Delegated user managers
+cannot reset passwords, and administrator accounts use their own password form.
+No email delivery or public password-reset endpoint is required.
+
+If the administrator cannot sign in, recover that existing account from the server:
+
+```sh
+docker exec -it <inkwell-container> node /app/recover-admin.mjs
+```
+
+The interactive command asks for the existing administrator username and a new
+password twice, hiding the password input. It reactivates that administrator and
+ends their sessions. It does not create accounts or discard request history.
+Passwords are not passed as command arguments or environment variables.
 
 ## What approval means
 
